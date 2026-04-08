@@ -1,8 +1,10 @@
 from pathlib import Path
 import os
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+load_dotenv(BASE_DIR / ".env")
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = 'django-insecure-lcy0@@g2evbga5=uvhunbofv(o!)nbmm9mx(5p#dphvws@sskz'
@@ -22,13 +24,18 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.sites',
     'accounts',
     'audit',
     'documents',
     'kyc',
     'notifications',
     'payments',
-    'transactions'
+    'transactions',
+    'rest_framework',
+
+    'allauth',
+    'allauth.account'
 ]
 
 MIDDLEWARE = [
@@ -39,6 +46,9 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+
+    # allauth middleware
+    'allauth.account.middleware.AccountMiddleware',
 ]
 
 ROOT_URLCONF = 'easyescrow_1.urls'
