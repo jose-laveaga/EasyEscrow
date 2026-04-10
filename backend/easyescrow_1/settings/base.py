@@ -131,16 +131,37 @@ AUTHENTICATION_BACKENDS = [
     'allauth.account.auth_backends.AuthenticationBackend',
 ]
 
+EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+DEFAULT_FROM_EMAIL = "noreply@easyescrow.local"
+
 # Redirect URLs
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/'
 
-# allauth settings (minimal suggested setup)
+# allauth settings
 
-ACCOUNT_SIGNUP_FIELDS = ['email*', 'password1*', 'password2*']
-ACCOUNT_SESSION_REMEMBER = True
+ACCOUNT_USER_MODEL_USERNAME_FIELD = None
 ACCOUNT_LOGIN_METHODS = {'email'}
-ACCOUNT_EMAIL_VERIFICATION = 'optional'
+ACCOUNT_SIGNUP_FIELDS = ['email*', 'password1*', 'password2*']
+ACCOUNT_SESSION_REMEMBER = False
+
+ACCOUNT_PREVENT_ENUMERATION = True
+
+# email verification
+
+ACCOUNT_EMAIL_VERIFICATION = 'mandatory'
+ACCOUNT_EMAIL_VERIFICATION_BY_CODE_ENABLED = True
+ACCOUNT_EMAIL_VERIFICATION_SUPPORTS_RESEND = True
+ACCOUNT_UNIQUE_EMAIL = True
+ACCOUNT_CHANGE_EMAIL = True
+
+ACCOUNT_REAUTHENTICATION_REQUIRED = True
+
+# sending emails
+
+ACCOUNT_EMAIL_SUBJECT_PREFIX = '[EasyEscrow] '
+ACCOUNT_EMAIL_NOTIFICATIONS = True
+
 
 
 STATIC_URL = 'static/'
