@@ -1,5 +1,7 @@
 from pathlib import Path
 import os
+
+from django.conf.global_settings import AUTH_USER_MODEL
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -38,6 +40,8 @@ INSTALLED_APPS = [
     'allauth.account',
     'allauth.socialaccount',
 ]
+
+SITE_ID = 1
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -156,6 +160,10 @@ ACCOUNT_UNIQUE_EMAIL = True
 ACCOUNT_CHANGE_EMAIL = True
 
 ACCOUNT_REAUTHENTICATION_REQUIRED = True
+
+# password reset
+
+ACCOUNT_PASSWORD_RESET_BY_CODE_ENABLED = True
 
 # sending emails
 
