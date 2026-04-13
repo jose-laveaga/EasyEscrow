@@ -1,7 +1,6 @@
 from pathlib import Path
 import os
 
-from django.conf.global_settings import AUTH_USER_MODEL
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -16,6 +15,7 @@ DEBUG = True
 
 ALLOWED_HOSTS = []
 
+AUTH_USER_MODEL = 'accounts.User'
 
 # Application definition
 
@@ -27,6 +27,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django.contrib.sites',
+    'django.contrib.humanize', #mfa requires this
     'accounts',
     'audit',
     'documents',
@@ -39,7 +40,10 @@ INSTALLED_APPS = [
     'allauth',
     'allauth.account',
     'allauth.socialaccount',
+    'allauth.mfa',
 ]
+
+# SITE_ID for django.contrib.sites
 
 SITE_ID = 1
 
@@ -123,9 +127,6 @@ USE_I18N = True
 USE_TZ = True
 
 
-# SITE_ID for django.contrib.sites
-SITE_ID = 1
-
 # Authentication Backends for allauth
 AUTHENTICATION_BACKENDS = [
     # Needed to login by username in Django admin, regardless of `allauth`
@@ -169,6 +170,20 @@ ACCOUNT_PASSWORD_RESET_BY_CODE_ENABLED = True
 
 ACCOUNT_EMAIL_SUBJECT_PREFIX = '[EasyEscrow] '
 ACCOUNT_EMAIL_NOTIFICATIONS = True
+
+# mfa
+
+MFA_SUPPORTED_TYPES = ["totp", "webauthn", "recovery_code"]
+MFA_WEBAUTHN_RP_NAME = "EasyEscrow"
+MFA_TOTP_ISSUER = "EasyEscrow"
+MFA_PASSKEY_LOGIN_ENABLED = True
+
+
+
+# IMPORTANT: REMOVE IN PRODUCTION!!!
+
+
+MFA_WEBAUTHN_ALLOW_INSECURE_ORIGIN = True
 
 
 
