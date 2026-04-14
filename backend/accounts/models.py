@@ -43,3 +43,168 @@ class User(AbstractUser):
 
     def __str__(self):
         return self.email
+
+
+# Broker profile
+
+import uuid
+from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.db import models
+from django.utils import timezone
+
+class BrokerType(models.TextChoices):
+    INDIVIDUAL = "individual", "Individual"
+    COMPANY_REPRESENTATIVE = "company_representative", "Company representative"
+
+class BrokerApplicationStatus(models.TextChoices):
+    DRAFT = "draft", "Draft"
+    UNDER_REVIEW = "under_review", "Under review"
+    APPROVED = "approved", "Approved"
+    REJECTED = "rejected", "Rejected"
+    NEEDS_INFO = "needs_info", "Needs info"
+
+class BrokerProfile(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="broker_profile",
+    )
+
+    broker_type = models.CharField(
+        max_length=30,
+        choices=BrokerType.choices,
+    )
+
+    # Core broker identity / business info
+    rfc = models.CharField(max_length=13)
+    state = models.CharField(max_length=100)
+    city = models.CharField(max_length=100)
+
+    # Optional professional signal
+    brokerage_name = models.CharField(max_length=255, blank=True)
+    certification_name = models.CharField(max_length=255, blank=True)
+    certification_number = models.CharField(max_length=100, blank=True)
+
+    # Company representative fields
+    company_legal_name = models.CharField(max_length=255, blank=True)
+    company_rfc = models.CharField(max_length=13, blank=True)
+    representative_job_title = models.CharField(max_length=255, blank=True)
+    has_authority_to_represent = models.BooleanField(default=False)
+
+    # Verification / application workflow
+    identity_verified = models.BooleanField(default=False)
+
+    application_status = models.CharField(
+        max_length=20,
+        choices=BrokerApplicationStatus.choices,
+        default=BrokerApplicationStatus.DRAFT,
+    )
+
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    needs_info_at = models.DateTimeField(null=True, blank=True)
+
+    # Platform-level broker declaration / attestation
+    accepted_broker_declaration_at = models.DateTimeField(null=True, blank=True)
+
+    # Optional internal review/admin notes
+    review_notes = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "broker_profiles"
+
+    def __str__(self) -> str:
+        return f"BrokerProfile<{self.user.email}>"
+
+    @property
+    def is_approved(self) -> bool:
+        return self.application_status == BrokerApplicationStatus.APPROVED
+
+    @property
+    def can_create_transactions(self) -> bool:
+        return self.application_status == BrokerApplicationStatus.APPROVED
+
+    def clean(self) -> None:
+        errors = {}
+
+        if self.broker_type == BrokerType.COMPANY_REPRESENTATIVE:
+            if not self.company_legal_name:
+                errors["company_legal_name"] = "This field is required for company representatives."
+            if not self.company_rfc:
+                errors["company_rfc"] = "This field is required for company representatives."
+            if not self.representative_job_title:
+                errors["representative_job_title"] = "This field is required for company representatives."
+            if not self.has_authority_to_represent:
+                errors["has_authority_to_represent"] = (
+                    "Company representatives must declare authority to represent the company."
+                )
+
+        if self.broker_type == BrokerType.INDIVIDUAL:
+            if self.company_legal_name:
+                errors["company_legal_name"] = "Individuals should not provide company legal name."
+            if self.company_rfc:
+                errors["company_rfc"] = "Individuals should not provide company RFC."
+            if self.representative_job_title:
+                errors["representative_job_title"] = "Individuals should not provide representative job title."
+            if self.has_authority_to_represent:
+                errors["has_authority_to_represent"] = (
+                    "Individuals should not declare company representation authority."
+                )
+
+        if errors:
+            raise ValidationError(errors)
+
+    def submit_for_review(self) -> None:
+        self.full_clean()
+
+        if not self.accepted_broker_declaration_at:
+            raise ValidationError(
+                {"accepted_broker_declaration_at": "Broker declaration must be accepted before submission."}
+            )
+
+        if not self.identity_verified:
+            raise ValidationError(
+                {"identity_verified": "Identity must be verified before submission."}
+            )
+
+        self.application_status = BrokerApplicationStatus.UNDER_REVIEW
+        self.submitted_at = timezone.now()
+        self.approved_at = None
+        self.rejected_at = None
+        self.needs_info_at = None
+
+    def mark_needs_info(self, notes: str = "") -> None:
+        self.application_status = BrokerApplicationStatus.NEEDS_INFO
+        self.needs_info_at = timezone.now()
+        self.review_notes = notes
+        self.approved_at = None
+        self.rejected_at = None
+
+    def approve(self, notes: str = "") -> None:
+        self.application_status = BrokerApplicationStatus.APPROVED
+        self.approved_at = timezone.now()
+        self.rejected_at = None
+        self.needs_info_at = None
+        self.review_notes = notes
+
+    def reject(self, notes: str = "") -> None:
+        self.application_status = BrokerApplicationStatus.REJECTED
+        self.rejected_at = timezone.now()
+        self.approved_at = None
+        self.needs_info_at = None
+        self.review_notes = notes
+
+    def save(self, *args, **kwargs):
+        if self.rfc:
+            self.rfc = self.rfc.strip().upper()
+        if self.company_rfc:
+            self.company_rfc = self.company_rfc.strip().upper()
+        super().save(*args, **kwargs)
+
