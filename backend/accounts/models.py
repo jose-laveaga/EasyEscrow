@@ -1,6 +1,25 @@
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
+from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.core.validators import RegexValidator
+from django.utils import timezone
+import uuid
 
+rfc_validator = RegexValidator(
+    regex=r"^[A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{3}$",
+    message="Enter a valid Mexican RFC.",
+)
+
+phone_validator = RegexValidator(
+    regex=r"^\+52\d{10}$",
+    message="Enter a valid Mexican phone number in format +52-XX-XXXX-XXXX.",
+)
+
+name_place_validator = RegexValidator(
+    regex=r"^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ'.\- ]{2,100}$",
+    message="This field contains invalid characters.",
+)
 
 class UserManager(BaseUserManager):
     use_in_migrations = True
@@ -24,9 +43,9 @@ class UserManager(BaseUserManager):
         extra_fields.setdefault("is_superuser", True)
         extra_fields.setdefault("is_active", True)
 
-        if extra_fields.get("is_staff") is not True:
+        if extra_fields.get("is_staff") is False:
             raise ValueError("Superuser must have is_staff=True.")
-        if extra_fields.get("is_superuser") is not True:
+        if extra_fields.get("is_superuser") is False:
             raise ValueError("Superuser must have is_superuser=True.")
 
         return self._create_user(email, password, **extra_fields)
@@ -34,6 +53,8 @@ class UserManager(BaseUserManager):
 
 class User(AbstractUser):
     username = None
+    first_name = models.CharField(max_length=100, validators=[name_place_validator])
+    last_name = models.CharField(max_length=100, validators=[name_place_validator])
     email = models.EmailField(unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -49,24 +70,27 @@ class User(AbstractUser):
 
 # Broker profile
 
-import uuid
-from django.conf import settings
-from django.core.exceptions import ValidationError
-from django.db import models
-from django.utils import timezone
 
-class BrokerType(models.TextChoices):
-    INDIVIDUAL = "individual", "Individual"
-    COMPANY_REPRESENTATIVE = "company_representative", "Company representative"
-
-class BrokerApplicationStatus(models.TextChoices):
-    DRAFT = "draft", "Draft"
-    UNDER_REVIEW = "under_review", "Under review"
-    APPROVED = "approved", "Approved"
-    REJECTED = "rejected", "Rejected"
-    NEEDS_INFO = "needs_info", "Needs info"
 
 class BrokerProfile(models.Model):
+    class BrokerApplicationStatus(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        UNDER_REVIEW = "under_review", "Under review"
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
+        NEEDS_INFO = "needs_info", "Needs info"
+
+    class BrokerType(models.TextChoices):
+        INDIVIDUAL = "individual", "Individual"
+        COMPANY_REPRESENTATIVE = "company_representative", "Company representative"
+
+    class MexicoState(models.TextChoices):
+        CIUDAD_DE_MEXICO = "CIUDAD_DE_MEXICO", "Ciudad de México"
+        JALISCO = "JALISCO", "Jalisco"
+        NUEVO_LEON = "NUEVO_LEON", "Nuevo León"
+        ESTADO_DE_MEXICO = "ESTADO_DE_MEXICO", "Estado de México"
+        # add the rest
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
     user = models.OneToOneField(
@@ -77,13 +101,15 @@ class BrokerProfile(models.Model):
 
     broker_type = models.CharField(
         max_length=30,
-        choices=BrokerType.choices,
+        choices=BrokerType,
     )
 
     # Core broker identity / business info
-    rfc = models.CharField(max_length=13)
-    state = models.CharField(max_length=100)
-    city = models.CharField(max_length=100)
+
+    phone = models.CharField(max_length=13, validators=[phone_validator])
+    rfc = models.CharField(max_length=13, validators=[rfc_validator])
+    city = models.CharField(max_length=100, validators=[name_place_validator])
+    state = models.CharField(max_length=50, choices=MexicoState)
 
     # Optional professional signal
     brokerage_name = models.CharField(max_length=255, blank=True)
@@ -101,7 +127,7 @@ class BrokerProfile(models.Model):
 
     application_status = models.CharField(
         max_length=20,
-        choices=BrokerApplicationStatus.choices,
+        choices=BrokerApplicationStatus,
         default=BrokerApplicationStatus.DRAFT,
     )
 
@@ -127,16 +153,16 @@ class BrokerProfile(models.Model):
 
     @property
     def is_approved(self) -> bool:
-        return self.application_status == BrokerApplicationStatus.APPROVED
+        return self.application_status == self.BrokerApplicationStatus.APPROVED
 
     @property
     def can_create_transactions(self) -> bool:
-        return self.application_status == BrokerApplicationStatus.APPROVED
+        return self.application_status == self.BrokerApplicationStatus.APPROVED
 
     def clean(self) -> None:
         errors = {}
 
-        if self.broker_type == BrokerType.COMPANY_REPRESENTATIVE:
+        if self.broker_type == self.BrokerType.COMPANY_REPRESENTATIVE:
             if not self.company_legal_name:
                 errors["company_legal_name"] = "This field is required for company representatives."
             if not self.company_rfc:
@@ -148,7 +174,7 @@ class BrokerProfile(models.Model):
                     "Company representatives must declare authority to represent the company."
                 )
 
-        if self.broker_type == BrokerType.INDIVIDUAL:
+        if self.broker_type == self.BrokerType.INDIVIDUAL:
             if self.company_legal_name:
                 errors["company_legal_name"] = "Individuals should not provide company legal name."
             if self.company_rfc:
@@ -176,28 +202,28 @@ class BrokerProfile(models.Model):
                 {"identity_verified": "Identity must be verified before submission."}
             )
 
-        self.application_status = BrokerApplicationStatus.UNDER_REVIEW
+        self.application_status = self.BrokerApplicationStatus.UNDER_REVIEW
         self.submitted_at = timezone.now()
         self.approved_at = None
         self.rejected_at = None
         self.needs_info_at = None
 
     def mark_needs_info(self, notes: str = "") -> None:
-        self.application_status = BrokerApplicationStatus.NEEDS_INFO
+        self.application_status = self.BrokerApplicationStatus.NEEDS_INFO
         self.needs_info_at = timezone.now()
         self.review_notes = notes
         self.approved_at = None
         self.rejected_at = None
 
     def approve(self, notes: str = "") -> None:
-        self.application_status = BrokerApplicationStatus.APPROVED
+        self.application_status = self.BrokerApplicationStatus.APPROVED
         self.approved_at = timezone.now()
         self.rejected_at = None
         self.needs_info_at = None
         self.review_notes = notes
 
     def reject(self, notes: str = "") -> None:
-        self.application_status = BrokerApplicationStatus.REJECTED
+        self.application_status = self.BrokerApplicationStatus.REJECTED
         self.rejected_at = timezone.now()
         self.approved_at = None
         self.needs_info_at = None
