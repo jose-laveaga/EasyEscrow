@@ -1,9 +1,9 @@
+from django.core.exceptions import ObjectDoesNotExist
 from django.shortcuts import render
-from allauth.account.decorators import verified_email_required
 from django.contrib.auth.decorators import login_required
 from rest_framework import generics, permissions, status
-from rest_framework.decorators import api_view
 from rest_framework.response import Response
+
 from accounts.serializers import BrokerApplicationSerializer, BrokerProfileSerializer
 from accounts.services.broker import apply_for_broker_status
 
@@ -13,8 +13,9 @@ class BrokerProfileView(generics.GenericAPIView):
     serializer_class = BrokerProfileSerializer
 
     def get(self, request, *args, **kwargs):
-        profile = getattr(request.user, "broker_profile", None)
-        if not profile:
+        try:
+            profile = request.user.broker_profile
+        except ObjectDoesNotExist:
             return Response(
                 {"detail": "Broker profile not found."},
                 status=status.HTTP_404_NOT_FOUND,
@@ -39,9 +40,12 @@ class BrokerApplicationView(generics.GenericAPIView):
 
         response_serializer = BrokerProfileSerializer(profile)
         return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+
 def index(request):
-    return render(request, 'index.html')
+    return render(request, "index.html")
+
 
 @login_required
 def secret(request):
-    return render(request, 'secret.html')
+    return render(request, "secret.html")
