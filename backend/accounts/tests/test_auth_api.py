@@ -49,6 +49,9 @@ class AllauthApiTests(APITestCase):
             reverse("account_signup"),
             {
                 "email": "pending@example.com",
+                "first_name": "Jose",
+                "middle_name": "Antonio",
+                "last_name": "Martinez Lopez",
                 "password1": self.password,
                 "password2": self.password,
             },
@@ -90,6 +93,9 @@ class AllauthApiTests(APITestCase):
             confirm_response.data["session"]["user"]["email"],
             "pending@example.com",
         )
+        self.assertEqual(confirm_response.data["session"]["user"]["first_name"], "Jose")
+        self.assertEqual(confirm_response.data["session"]["user"]["middle_name"], "Antonio")
+        self.assertEqual(confirm_response.data["session"]["user"]["last_name"], "Martinez Lopez")
 
     def test_password_reset_flow_is_json_first(self):
         user = self.create_verified_user(email="reset@example.com")

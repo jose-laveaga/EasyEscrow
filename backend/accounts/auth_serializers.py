@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from accounts.models import User
+from accounts.validators import name_place_validator
 
 class EmptySerializer(serializers.Serializer):
     pass
@@ -12,6 +13,7 @@ class AuthUserSerializer(serializers.ModelSerializer):
             "id",
             "email",
             "first_name",
+            "middle_name",
             "last_name",
             "phone",
             "is_active",
@@ -28,6 +30,13 @@ class LoginSerializer(serializers.Serializer):
 
 class SignupSerializer(serializers.Serializer):
     email = serializers.EmailField()
+    first_name = serializers.CharField(max_length=150, validators=[name_place_validator])
+    middle_name = serializers.CharField(
+        max_length=150,
+        required=False,
+        allow_blank=True,
+    )
+    last_name = serializers.CharField(max_length=150, validators=[name_place_validator])
     password1 = serializers.CharField(write_only=True, trim_whitespace=False)
     password2 = serializers.CharField(write_only=True, trim_whitespace=False)
 

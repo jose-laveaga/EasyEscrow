@@ -1,5 +1,5 @@
-from django.core.exceptions import ObjectDoesNotExist, ValidationError as DjangoValidationError
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.shortcuts import render
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import ValidationError as DRFValidationError
@@ -7,13 +7,23 @@ from rest_framework.response import Response
 
 from accounts.serializers import (
     BrokerApplicationDraftSerializer,
+    BrokerApplicationSerializer,
     BrokerApplicationSubmitSerializer,
     BrokerProfileSerializer,
+    IdentityVerificationDraftSerializer,
+    IdentityVerificationSerializer,
+    IdentityVerificationSubmitSerializer,
 )
 from accounts.services.broker import (
     get_broker_application_for_user,
+    get_broker_profile_for_user,
     save_broker_application_draft,
     submit_broker_application,
+)
+from accounts.services.identity import (
+    get_identity_verification_for_user,
+    save_identity_verification_draft,
+    submit_identity_verification,
 )
 
 
@@ -23,14 +33,67 @@ def _raise_drf_validation_error(exc: DjangoValidationError) -> None:
     raise DRFValidationError(exc.messages)
 
 
+class IdentityVerificationView(generics.GenericAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = IdentityVerificationDraftSerializer
+
+    def get(self, request, *args, **kwargs):
+        identity_verification = get_identity_verification_for_user(request.user)
+        if not identity_verification:
+            return Response(
+                {"detail": "Identity verification not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        response_serializer = IdentityVerificationSerializer(identity_verification)
+        return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+    def patch(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            identity_verification = save_identity_verification_draft(
+                user=request.user,
+                **serializer.validated_data,
+            )
+        except DjangoValidationError as exc:
+            _raise_drf_validation_error(exc)
+
+        response_serializer = IdentityVerificationSerializer(identity_verification)
+        return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+    def put(self, request, *args, **kwargs):
+        return self.patch(request, *args, **kwargs)
+
+
+class IdentityVerificationSubmitView(generics.GenericAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = IdentityVerificationSubmitSerializer
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            identity_verification = submit_identity_verification(
+                user=request.user,
+                **serializer.validated_data,
+            )
+        except DjangoValidationError as exc:
+            _raise_drf_validation_error(exc)
+
+        response_serializer = IdentityVerificationSerializer(identity_verification)
+        return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+
 class BrokerProfileView(generics.GenericAPIView):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = BrokerProfileSerializer
 
     def get(self, request, *args, **kwargs):
-        try:
-            profile = request.user.broker_profile
-        except ObjectDoesNotExist:
+        profile = get_broker_profile_for_user(request.user)
+        if not profile:
             return Response(
                 {"detail": "Broker profile not found."},
                 status=status.HTTP_404_NOT_FOUND,
@@ -45,14 +108,14 @@ class BrokerApplicationView(generics.GenericAPIView):
     serializer_class = BrokerApplicationDraftSerializer
 
     def get(self, request, *args, **kwargs):
-        profile = get_broker_application_for_user(request.user)
-        if not profile:
+        application = get_broker_application_for_user(request.user)
+        if not application:
             return Response(
                 {"detail": "Broker application not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        response_serializer = BrokerProfileSerializer(profile)
+        response_serializer = BrokerApplicationSerializer(application)
         return Response(response_serializer.data, status=status.HTTP_200_OK)
 
     def patch(self, request, *args, **kwargs):
@@ -60,14 +123,14 @@ class BrokerApplicationView(generics.GenericAPIView):
         serializer.is_valid(raise_exception=True)
 
         try:
-            profile = save_broker_application_draft(
+            application = save_broker_application_draft(
                 user=request.user,
                 **serializer.validated_data,
             )
         except DjangoValidationError as exc:
             _raise_drf_validation_error(exc)
 
-        response_serializer = BrokerProfileSerializer(profile)
+        response_serializer = BrokerApplicationSerializer(application)
         return Response(response_serializer.data, status=status.HTTP_200_OK)
 
     def put(self, request, *args, **kwargs):
@@ -83,14 +146,14 @@ class BrokerApplicationSubmitView(generics.GenericAPIView):
         serializer.is_valid(raise_exception=True)
 
         try:
-            profile = submit_broker_application(
+            application = submit_broker_application(
                 user=request.user,
                 **serializer.validated_data,
             )
         except DjangoValidationError as exc:
             _raise_drf_validation_error(exc)
 
-        response_serializer = BrokerProfileSerializer(profile)
+        response_serializer = BrokerApplicationSerializer(application)
         return Response(response_serializer.data, status=status.HTTP_200_OK)
 
 

@@ -1,13 +1,14 @@
-from .broker import BrokerApplicationStatus, BrokerProfile, BrokerType
-from .profile import GovernmentIDType, IdentityStatus, UserProfile
+from .broker import BrokerApplication, BrokerApplicationStatus, BrokerProfile, BrokerType
+from .profile import GovernmentIDType, IdentityVerificationStatus, UserProfile
 from .user import User, UserManager
 
 __all__ = [
     "User",
     "UserManager",
     "UserProfile",
-    "IdentityStatus",
     "GovernmentIDType",
+    "IdentityVerificationStatus",
+    "BrokerApplication",
     "BrokerProfile",
     "BrokerApplicationStatus",
     "BrokerType",

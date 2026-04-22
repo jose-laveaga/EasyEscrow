@@ -1,22 +1,16 @@
-from django.core.exceptions import ObjectDoesNotExist, ValidationError
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
-from accounts.models import BrokerApplicationStatus, BrokerProfile, BrokerType, UserProfile
-
-
-PROFILE_FIELD_NAMES = (
-    "date_of_birth",
-    "state",
-    "city",
-    "address_line_1",
-    "address_line_2",
-    "postal_code",
-    "rfc",
-    "curp",
-    "id_type",
-    "id_image",
+from accounts.models import (
+    BrokerApplication,
+    BrokerApplicationStatus,
+    BrokerProfile,
+    BrokerType,
+    IdentityVerificationStatus,
+    UserProfile,
 )
+
 
 BROKER_FIELD_NAMES = (
     "broker_type",
@@ -35,54 +29,60 @@ BROKER_FIELD_NAMES = (
 )
 
 
-def _get_locked_user_profile(user):
-    try:
-        return UserProfile.objects.select_for_update().get(user=user)
-    except UserProfile.DoesNotExist:
-        return UserProfile(user=user)
+def _get_locked_broker_application(user, *, broker_type=None):
+    application = (
+        BrokerApplication.objects.select_for_update()
+        .select_related("user")
+        .filter(user=user)
+        .order_by("-created_at")
+        .first()
+    )
+    if application:
+        return application
 
-
-def _get_locked_broker_profile(user, *, broker_type=None):
-    try:
-        return BrokerProfile.objects.select_for_update().select_related("user").get(user=user)
-    except BrokerProfile.DoesNotExist:
-        if not broker_type:
-            raise ValidationError(
-                {"broker_type": "Broker type is required to start a broker application."}
-            )
-        return BrokerProfile(
-            user=user,
-            broker_type=broker_type,
-            application_status=BrokerApplicationStatus.DRAFT,
+    if not broker_type:
+        raise ValidationError(
+            {"broker_type": "Broker type is required to start a broker application."}
         )
 
-
-def _get_locked_profile_instance(profile: BrokerProfile) -> BrokerProfile:
-    return (
-        BrokerProfile.objects.select_for_update()
-        .select_related("user")
-        .get(pk=profile.pk)
+    return BrokerApplication(
+        user=user,
+        broker_type=broker_type,
+        status=BrokerApplicationStatus.DRAFT,
     )
 
 
-def _apply_profile_updates(user_profile: UserProfile, data: dict) -> None:
-    for field_name in PROFILE_FIELD_NAMES:
-        if field_name not in data:
-            continue
-
-        value = data[field_name]
-        if isinstance(value, str):
-            value = value.strip()
-            if field_name in {"rfc", "curp"}:
-                value = value.upper()
-        setattr(user_profile, field_name, value)
+def _get_locked_broker_application_instance(application: BrokerApplication) -> BrokerApplication:
+    return (
+        BrokerApplication.objects.select_for_update()
+        .select_related("user")
+        .get(pk=application.pk)
+    )
 
 
-def _apply_broker_updates(broker_profile: BrokerProfile, data: dict) -> None:
+def _get_locked_identity_profile(user) -> UserProfile | None:
+    return (
+        UserProfile.objects.select_for_update()
+        .select_related("user")
+        .filter(user=user)
+        .first()
+    )
+
+
+def _get_locked_broker_profile(user) -> BrokerProfile | None:
+    return (
+        BrokerProfile.objects.select_for_update()
+        .select_related("user", "user__profile", "approved_application")
+        .filter(user=user)
+        .first()
+    )
+
+
+def _apply_broker_updates(application: BrokerApplication, data: dict) -> None:
     if "broker_type" in data and data["broker_type"]:
-        broker_profile.broker_type = data["broker_type"]
+        application.broker_type = data["broker_type"]
 
-    if not broker_profile.broker_type:
+    if not application.broker_type:
         raise ValidationError(
             {"broker_type": "Broker type is required to save a broker application."}
         )
@@ -96,178 +96,214 @@ def _apply_broker_updates(broker_profile: BrokerProfile, data: dict) -> None:
             value = value.strip()
             if field_name == "company_rfc":
                 value = value.upper()
-        setattr(broker_profile, field_name, value)
+        setattr(application, field_name, value)
 
-    if broker_profile.broker_type == BrokerType.INDIVIDUAL:
-        broker_profile.company_legal_name = ""
-        broker_profile.company_rfc = ""
-        broker_profile.representative_job_title = ""
-        broker_profile.has_authority_to_represent = False
+    if application.broker_type == BrokerType.INDIVIDUAL:
+        application.company_legal_name = ""
+        application.company_rfc = ""
+        application.representative_job_title = ""
+        application.has_authority_to_represent = False
 
 
-def _apply_declaration_state(broker_profile: BrokerProfile, data: dict) -> None:
+def _apply_declaration_state(application: BrokerApplication, data: dict) -> None:
     if "accepted_broker_declaration" not in data:
         return
 
     accepted = data["accepted_broker_declaration"]
     if accepted:
-        if not broker_profile.accepted_broker_declaration_at:
-            broker_profile.accepted_broker_declaration_at = timezone.now()
+        if not application.accepted_broker_declaration_at:
+            application.accepted_broker_declaration_at = timezone.now()
         return
 
-    if broker_profile.is_editable_by_applicant:
-        broker_profile.accepted_broker_declaration_at = None
-
-
-def _save_application_models(user_profile: UserProfile, broker_profile: BrokerProfile) -> None:
-    user_profile.full_clean()
-    user_profile.save()
-    broker_profile.full_clean()
-    broker_profile.save()
+    if application.is_editable_by_applicant:
+        application.accepted_broker_declaration_at = None
 
 
 def _validate_submission_requirements(
-    user_profile: UserProfile,
-    broker_profile: BrokerProfile,
+    application: BrokerApplication,
+    identity_profile: UserProfile | None,
 ) -> None:
     errors = {}
 
-    if not user_profile.state:
-        errors["state"] = "State is required before submitting a broker application."
-    if not user_profile.city:
-        errors["city"] = "City is required before submitting a broker application."
-    if not any([user_profile.rfc, user_profile.curp, user_profile.id_image]):
-        errors["non_field_errors"] = [
-            "Provide at least one reusable identity document or identifier before submission."
-        ]
-    if not broker_profile.broker_type:
+    if not identity_profile:
+        errors["identity_verification"] = (
+            "Submit identity verification before submitting a broker application."
+        )
+    elif not identity_profile.has_submitted_form:
+        errors["identity_verification"] = (
+            "Identity verification must be submitted before submitting a broker application."
+        )
+
+    if not application.broker_type:
         errors["broker_type"] = "Broker type is required before submitting a broker application."
 
     if errors:
         raise ValidationError(errors)
 
 
+def _upsert_broker_profile_from_application(
+    *,
+    application: BrokerApplication,
+    reviewer,
+) -> BrokerProfile:
+    profile = _get_locked_broker_profile(application.user)
+    if profile is None:
+        profile = BrokerProfile(
+            user=application.user,
+            broker_type=application.broker_type,
+        )
+
+    profile.sync_from_application(
+        application=application,
+        reviewer=reviewer,
+    )
+    profile.full_clean()
+    profile.save()
+    return profile
+
+
 @transaction.atomic
-def save_broker_application_draft(*, user, **data) -> BrokerProfile:
+def save_broker_application_draft(*, user, **data) -> BrokerApplication:
     broker_type = data.get("broker_type")
-    user_profile = _get_locked_user_profile(user)
-    broker_profile = _get_locked_broker_profile(user, broker_type=broker_type)
+    application = _get_locked_broker_application(user, broker_type=broker_type)
 
-    broker_profile.save_draft()
-    _apply_profile_updates(user_profile, data)
-    _apply_broker_updates(broker_profile, data)
-    _apply_declaration_state(broker_profile, data)
-    _save_application_models(user_profile, broker_profile)
+    application.save_draft()
+    _apply_broker_updates(application, data)
+    _apply_declaration_state(application, data)
+    application.full_clean()
+    application.save()
 
-    return broker_profile
+    return application
 
 
 @transaction.atomic
-def submit_broker_application(*, user, **data) -> BrokerProfile:
+def submit_broker_application(*, user, **data) -> BrokerApplication:
     broker_type = data.get("broker_type")
-    user_profile = _get_locked_user_profile(user)
-    broker_profile = _get_locked_broker_profile(user, broker_type=broker_type)
+    application = _get_locked_broker_application(user, broker_type=broker_type)
+    identity_profile = _get_locked_identity_profile(user)
 
-    _apply_profile_updates(user_profile, data)
-    _apply_broker_updates(broker_profile, data)
-    _apply_declaration_state(broker_profile, data)
-    user_profile.full_clean()
-    user_profile.save()
-    _validate_submission_requirements(user_profile, broker_profile)
-    broker_profile.submit()
-    broker_profile.save()
+    _apply_broker_updates(application, data)
+    _apply_declaration_state(application, data)
+    _validate_submission_requirements(application, identity_profile)
+    application.submit()
+    application.save()
 
-    return broker_profile
+    return application
 
 
 @transaction.atomic
 def request_broker_application_changes(
     *,
-    profile: BrokerProfile,
+    application: BrokerApplication,
     reviewer,
     applicant_message: str,
     internal_review_notes: str = "",
-) -> BrokerProfile:
-    profile = _get_locked_profile_instance(profile)
-    profile.request_changes(
+) -> BrokerApplication:
+    application = _get_locked_broker_application_instance(application)
+    application.request_changes(
         reviewer=reviewer,
         applicant_message=applicant_message,
         internal_review_notes=internal_review_notes,
     )
-    profile.full_clean()
-    profile.save()
-    return profile
+    application.full_clean()
+    application.save()
+    return application
 
 
 @transaction.atomic
-def reopen_broker_profile(
+def reopen_broker_application(
     *,
-    profile: BrokerProfile,
+    application: BrokerApplication,
     reviewer,
     applicant_message: str,
     internal_review_notes: str = "",
-) -> BrokerProfile:
-    profile = _get_locked_profile_instance(profile)
-    profile.reopen(
+) -> BrokerApplication:
+    application = _get_locked_broker_application_instance(application)
+    application.reopen(
         reviewer=reviewer,
         applicant_message=applicant_message,
         internal_review_notes=internal_review_notes,
     )
-    profile.full_clean()
-    profile.save()
-    return profile
+    application.full_clean()
+    application.save()
+    return application
 
 
 @transaction.atomic
-def approve_broker_profile(
+def approve_broker_application(
     *,
-    profile: BrokerProfile,
+    application: BrokerApplication,
     reviewer,
     internal_review_notes: str = "",
-) -> BrokerProfile:
-    profile = _get_locked_profile_instance(profile)
-    profile.approve(
+) -> BrokerApplication:
+    application = _get_locked_broker_application_instance(application)
+    identity_profile = _get_locked_identity_profile(application.user)
+
+    if not identity_profile or identity_profile.status != IdentityVerificationStatus.VERIFIED:
+        raise ValidationError(
+            {"identity_verification": "The applicant's identity must be verified before broker approval."}
+        )
+
+    application.approve(
         reviewer=reviewer,
         internal_review_notes=internal_review_notes,
     )
-    profile.full_clean()
-    profile.save()
-    return profile
+    application.full_clean()
+    application.save()
+    _upsert_broker_profile_from_application(
+        application=application,
+        reviewer=reviewer,
+    )
+
+    return application
 
 
 @transaction.atomic
-def reject_broker_profile(
+def reject_broker_application(
     *,
-    profile: BrokerProfile,
+    application: BrokerApplication,
     reviewer,
     applicant_message: str,
     internal_review_notes: str = "",
-) -> BrokerProfile:
-    profile = _get_locked_profile_instance(profile)
-    profile.reject(
+) -> BrokerApplication:
+    application = _get_locked_broker_application_instance(application)
+    application.reject(
         reviewer=reviewer,
         applicant_message=applicant_message,
         internal_review_notes=internal_review_notes,
     )
-    profile.full_clean()
-    profile.save()
-    return profile
+    application.full_clean()
+    application.save()
+    return application
 
 
-def get_broker_application_for_user(user) -> BrokerProfile | None:
-    try:
-        return user.broker_profile
-    except ObjectDoesNotExist:
-        return None
+def get_broker_application_for_user(user) -> BrokerApplication | None:
+    return (
+        BrokerApplication.objects.select_related("user")
+        .filter(user=user)
+        .order_by("-created_at")
+        .first()
+    )
+
+
+def get_broker_profile_for_user(user) -> BrokerProfile | None:
+    return (
+        BrokerProfile.objects.select_related("user", "user__profile", "approved_application")
+        .filter(user=user)
+        .first()
+    )
 
 
 def user_can_create_transactions(user) -> bool:
     if not getattr(user, "is_authenticated", False):
         return False
 
-    profile = get_broker_application_for_user(user)
-    return bool(profile and profile.can_create_transactions)
+    return BrokerProfile.objects.filter(
+        user_id=user.pk,
+        is_active_broker=True,
+        user__profile__status=IdentityVerificationStatus.VERIFIED,
+    ).exists()
 
 
-def apply_for_broker_status(*, user, **data) -> BrokerProfile:
+def apply_for_broker_status(*, user, **data) -> BrokerApplication:
     return submit_broker_application(user=user, **data)

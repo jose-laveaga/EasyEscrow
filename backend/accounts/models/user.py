@@ -40,6 +40,11 @@ class User(AbstractUser):
         blank=True,
         validators=[name_place_validator],
     )
+    middle_name = models.CharField(
+        max_length=150,
+        blank=True,
+        validators=[name_place_validator],
+    )
     last_name = models.CharField(
         max_length=150,
         blank=True,
@@ -61,3 +66,14 @@ class User(AbstractUser):
 
     def __str__(self):
         return self.email
+
+    def save(self, *args, **kwargs):
+        if self.first_name:
+            self.first_name = self.first_name.strip()
+        if self.middle_name:
+            self.middle_name = self.middle_name.strip()
+        if self.last_name:
+            self.last_name = self.last_name.strip()
+        if self.phone:
+            self.phone = self.phone.strip()
+        super().save(*args, **kwargs)

@@ -20,13 +20,13 @@ class BrokerType(models.TextChoices):
     COMPANY_REPRESENTATIVE = "company_representative", "Company representative"
 
 
-class BrokerProfile(models.Model):
+class BrokerApplication(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
-    user = models.OneToOneField(
+    user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name="broker_profile",
+        related_name="broker_applications",
     )
 
     broker_type = models.CharField(
@@ -34,7 +34,7 @@ class BrokerProfile(models.Model):
         choices=BrokerType.choices,
     )
 
-    application_status = models.CharField(
+    status = models.CharField(
         max_length=20,
         choices=BrokerApplicationStatus.choices,
         default=BrokerApplicationStatus.DRAFT,
@@ -55,8 +55,6 @@ class BrokerProfile(models.Model):
     )
     accepted_broker_declaration_at = models.DateTimeField(null=True, blank=True)
 
-    is_active_broker = models.BooleanField(default=False)
-
     brokerage_name = models.CharField(max_length=255, blank=True)
     years_of_experience = models.PositiveSmallIntegerField(null=True, blank=True)
     primary_market = models.CharField(max_length=255, blank=True)
@@ -75,41 +73,30 @@ class BrokerProfile(models.Model):
     representative_job_title = models.CharField(max_length=255, blank=True)
     has_authority_to_represent = models.BooleanField(default=False)
 
-    professional_info_verified = models.BooleanField(default=False)
     manual_review_required = models.BooleanField(default=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = "broker_profiles"
-        verbose_name = "Broker profile"
-        verbose_name_plural = "Broker profiles"
+        db_table = "broker_applications"
+        verbose_name = "Broker application"
+        verbose_name_plural = "Broker applications"
         permissions = (
-            ("review_brokerprofile", "Can review broker applications"),
+            ("review_brokerapplication", "Can review broker applications"),
         )
+        ordering = ("-created_at",)
 
     def __str__(self) -> str:
-        return f"BrokerProfile<{self.user.email}>"
+        return f"BrokerApplication<{self.user.email}>"
 
     @property
     def is_approved(self) -> bool:
-        return self.application_status == BrokerApplicationStatus.APPROVED
-
-    @property
-    def can_create_transactions(self) -> bool:
-        return self.is_approved and self.is_active_broker
-
-    @property
-    def identity_is_verified(self) -> bool:
-        try:
-            return self.user.profile.identity_status == "verified"
-        except ObjectDoesNotExist:
-            return False
+        return self.status == BrokerApplicationStatus.APPROVED
 
     @property
     def is_editable_by_applicant(self) -> bool:
-        return self.application_status in {
+        return self.status in {
             BrokerApplicationStatus.DRAFT,
             BrokerApplicationStatus.NEEDS_INFO,
         }
@@ -118,7 +105,54 @@ class BrokerProfile(models.Model):
         errors = {}
 
         if (
-            self.application_status != BrokerApplicationStatus.DRAFT
+            self.status != BrokerApplicationStatus.DRAFT
+            and not self.brokerage_name
+        ):
+            errors["brokerage_name"] = "Brokerage name is required before submission."
+        if (
+            self.status != BrokerApplicationStatus.DRAFT
+            and self.years_of_experience is None
+        ):
+            errors["years_of_experience"] = "Years of experience is required before submission."
+        if (
+            self.status != BrokerApplicationStatus.DRAFT
+            and not self.primary_market
+        ):
+            errors["primary_market"] = "Primary market is required before submission."
+        if (
+            self.status != BrokerApplicationStatus.DRAFT
+            and not self.operating_state
+        ):
+            errors["operating_state"] = "Operating state is required before submission."
+        if (
+            self.status != BrokerApplicationStatus.DRAFT
+            and not self.license_or_registration_type
+        ):
+            errors["license_or_registration_type"] = (
+                "License or registration type is required before submission."
+            )
+        if (
+            self.status != BrokerApplicationStatus.DRAFT
+            and not self.license_or_registration_number
+        ):
+            errors["license_or_registration_number"] = (
+                "License or registration number is required before submission."
+            )
+        if (
+            self.status != BrokerApplicationStatus.DRAFT
+            and not self.issuing_authority
+        ):
+            errors["issuing_authority"] = "Issuing authority is required before submission."
+        if (
+            self.status != BrokerApplicationStatus.DRAFT
+            and not self.accepted_broker_declaration_at
+        ):
+            errors["accepted_broker_declaration_at"] = (
+                "Broker declaration must be accepted before submission."
+            )
+
+        if (
+            self.status != BrokerApplicationStatus.DRAFT
             and self.broker_type == BrokerType.COMPANY_REPRESENTATIVE
         ):
             if not self.company_legal_name:
@@ -133,7 +167,7 @@ class BrokerProfile(models.Model):
                 )
 
         if (
-            self.application_status != BrokerApplicationStatus.DRAFT
+            self.status != BrokerApplicationStatus.DRAFT
             and self.broker_type == BrokerType.INDIVIDUAL
         ):
             if self.company_legal_name:
@@ -153,37 +187,28 @@ class BrokerProfile(models.Model):
     def save_draft(self) -> None:
         if not self.is_editable_by_applicant:
             raise ValidationError(
-                {"application_status": "Only draft or needs-info applications can be edited by the applicant."}
+                {"status": "Only draft or needs-info applications can be edited by the applicant."}
             )
 
-        self.application_status = BrokerApplicationStatus.DRAFT
-        self.is_active_broker = False
-        self.professional_info_verified = False
+        self.status = BrokerApplicationStatus.DRAFT
         self.manual_review_required = True
 
     def submit(self) -> None:
-        if self.application_status not in {
+        if self.status not in {
             BrokerApplicationStatus.DRAFT,
             BrokerApplicationStatus.NEEDS_INFO,
         }:
             raise ValidationError(
-                {"application_status": "Only draft or needs-info applications can be submitted."}
+                {"status": "Only draft or needs-info applications can be submitted."}
             )
 
-        if not self.accepted_broker_declaration_at:
-            raise ValidationError(
-                {"accepted_broker_declaration_at": "Broker declaration must be accepted before submission."}
-            )
-
-        self.application_status = BrokerApplicationStatus.SUBMITTED
+        self.status = BrokerApplicationStatus.SUBMITTED
         self.submitted_at = timezone.now()
         self.review_started_at = None
         self.reviewed_at = None
         self.approved_at = None
         self.rejected_at = None
         self.applicant_message = ""
-        self.is_active_broker = False
-        self.professional_info_verified = False
         self.manual_review_required = True
 
         self.full_clean()
@@ -195,9 +220,9 @@ class BrokerProfile(models.Model):
         applicant_message: str,
         internal_review_notes: str = "",
     ) -> None:
-        if self.application_status != BrokerApplicationStatus.SUBMITTED:
+        if self.status != BrokerApplicationStatus.SUBMITTED:
             raise ValidationError(
-                {"application_status": "Only submitted applications can request more information."}
+                {"status": "Only submitted applications can request more information."}
             )
         if not applicant_message.strip():
             raise ValidationError(
@@ -205,7 +230,7 @@ class BrokerProfile(models.Model):
             )
 
         reviewed_at = timezone.now()
-        self.application_status = BrokerApplicationStatus.NEEDS_INFO
+        self.status = BrokerApplicationStatus.NEEDS_INFO
         self.review_started_at = self.review_started_at or reviewed_at
         self.reviewed_at = reviewed_at
         self.reviewed_by = reviewer
@@ -213,22 +238,16 @@ class BrokerProfile(models.Model):
         self.internal_review_notes = internal_review_notes.strip()
         self.approved_at = None
         self.rejected_at = None
-        self.is_active_broker = False
-        self.professional_info_verified = False
         self.manual_review_required = True
 
     def approve(self, *, reviewer, internal_review_notes: str = "") -> None:
-        if self.application_status != BrokerApplicationStatus.SUBMITTED:
+        if self.status != BrokerApplicationStatus.SUBMITTED:
             raise ValidationError(
-                {"application_status": "Only submitted applications can be approved."}
-            )
-        if not self.identity_is_verified:
-            raise ValidationError(
-                {"identity_status": "The applicant's identity must be verified before approval."}
+                {"status": "Only submitted applications can be approved."}
             )
 
         approved_at = timezone.now()
-        self.application_status = BrokerApplicationStatus.APPROVED
+        self.status = BrokerApplicationStatus.APPROVED
         self.review_started_at = self.review_started_at or approved_at
         self.reviewed_at = approved_at
         self.approved_at = approved_at
@@ -236,8 +255,6 @@ class BrokerProfile(models.Model):
         self.reviewed_by = reviewer
         self.applicant_message = ""
         self.internal_review_notes = internal_review_notes.strip()
-        self.is_active_broker = True
-        self.professional_info_verified = True
         self.manual_review_required = False
 
     def reject(
@@ -247,9 +264,9 @@ class BrokerProfile(models.Model):
         applicant_message: str,
         internal_review_notes: str = "",
     ) -> None:
-        if self.application_status != BrokerApplicationStatus.SUBMITTED:
+        if self.status != BrokerApplicationStatus.SUBMITTED:
             raise ValidationError(
-                {"application_status": "Only submitted applications can be rejected."}
+                {"status": "Only submitted applications can be rejected."}
             )
         if not applicant_message.strip():
             raise ValidationError(
@@ -257,7 +274,7 @@ class BrokerProfile(models.Model):
             )
 
         rejected_at = timezone.now()
-        self.application_status = BrokerApplicationStatus.REJECTED
+        self.status = BrokerApplicationStatus.REJECTED
         self.review_started_at = self.review_started_at or rejected_at
         self.reviewed_at = rejected_at
         self.rejected_at = rejected_at
@@ -265,8 +282,6 @@ class BrokerProfile(models.Model):
         self.reviewed_by = reviewer
         self.applicant_message = applicant_message.strip()
         self.internal_review_notes = internal_review_notes.strip()
-        self.is_active_broker = False
-        self.professional_info_verified = False
         self.manual_review_required = False
 
     def reopen(
@@ -276,9 +291,9 @@ class BrokerProfile(models.Model):
         applicant_message: str,
         internal_review_notes: str = "",
     ) -> None:
-        if self.application_status != BrokerApplicationStatus.REJECTED:
+        if self.status != BrokerApplicationStatus.REJECTED:
             raise ValidationError(
-                {"application_status": "Only rejected applications can be reopened."}
+                {"status": "Only rejected applications can be reopened."}
             )
         if not applicant_message.strip():
             raise ValidationError(
@@ -286,16 +301,116 @@ class BrokerProfile(models.Model):
             )
 
         reopened_at = timezone.now()
-        self.application_status = BrokerApplicationStatus.DRAFT
+        self.status = BrokerApplicationStatus.DRAFT
         self.reviewed_at = reopened_at
         self.reviewed_by = reviewer
         self.applicant_message = applicant_message.strip()
         self.internal_review_notes = internal_review_notes.strip()
         self.approved_at = None
         self.rejected_at = None
-        self.is_active_broker = False
-        self.professional_info_verified = False
         self.manual_review_required = True
+
+    def save(self, *args, **kwargs):
+        if self.company_rfc:
+            self.company_rfc = self.company_rfc.strip().upper()
+        super().save(*args, **kwargs)
+
+
+class BrokerProfile(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="broker_profile",
+    )
+    approved_application = models.ForeignKey(
+        "accounts.BrokerApplication",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="approved_profiles",
+    )
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="broker_profiles_approved",
+    )
+
+    broker_type = models.CharField(
+        max_length=30,
+        choices=BrokerType.choices,
+    )
+    is_active_broker = models.BooleanField(default=False)
+    approved_at = models.DateTimeField(null=True, blank=True)
+
+    brokerage_name = models.CharField(max_length=255, blank=True)
+    years_of_experience = models.PositiveSmallIntegerField(null=True, blank=True)
+    primary_market = models.CharField(max_length=255, blank=True)
+    operating_state = models.CharField(max_length=100, blank=True)
+    license_or_registration_type = models.CharField(max_length=255, blank=True)
+    license_or_registration_number = models.CharField(max_length=100, blank=True)
+    issuing_authority = models.CharField(max_length=255, blank=True)
+    license_expires_at = models.DateField(null=True, blank=True)
+
+    company_legal_name = models.CharField(max_length=255, blank=True)
+    company_rfc = models.CharField(
+        max_length=13,
+        blank=True,
+        validators=[rfc_validator],
+    )
+    representative_job_title = models.CharField(max_length=255, blank=True)
+    has_authority_to_represent = models.BooleanField(default=False)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "broker_profiles"
+        verbose_name = "Broker profile"
+        verbose_name_plural = "Broker profiles"
+
+    def __str__(self) -> str:
+        return f"BrokerProfile<{self.user.email}>"
+
+    @property
+    def can_create_transactions(self) -> bool:
+        try:
+            identity_profile = self.user.profile
+        except ObjectDoesNotExist:
+            return False
+        return bool(
+            self.is_active_broker
+            and identity_profile
+            and identity_profile.is_identity_verified
+        )
+
+    def sync_from_application(
+        self,
+        *,
+        application: BrokerApplication,
+        reviewer,
+    ) -> None:
+        self.user = application.user
+        self.approved_application = application
+        self.approved_by = reviewer
+        self.broker_type = application.broker_type
+        self.is_active_broker = True
+        self.approved_at = application.approved_at
+        self.brokerage_name = application.brokerage_name
+        self.years_of_experience = application.years_of_experience
+        self.primary_market = application.primary_market
+        self.operating_state = application.operating_state
+        self.license_or_registration_type = application.license_or_registration_type
+        self.license_or_registration_number = application.license_or_registration_number
+        self.issuing_authority = application.issuing_authority
+        self.license_expires_at = application.license_expires_at
+        self.company_legal_name = application.company_legal_name
+        self.company_rfc = application.company_rfc
+        self.representative_job_title = application.representative_job_title
+        self.has_authority_to_represent = application.has_authority_to_represent
 
     def save(self, *args, **kwargs):
         if self.company_rfc:
