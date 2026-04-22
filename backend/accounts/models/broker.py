@@ -104,52 +104,10 @@ class BrokerApplication(models.Model):
     def clean(self) -> None:
         errors = {}
 
-        if (
-            self.status != BrokerApplicationStatus.DRAFT
-            and not self.brokerage_name
-        ):
-            errors["brokerage_name"] = "Brokerage name is required before submission."
-        if (
-            self.status != BrokerApplicationStatus.DRAFT
-            and self.years_of_experience is None
-        ):
-            errors["years_of_experience"] = "Years of experience is required before submission."
-        if (
-            self.status != BrokerApplicationStatus.DRAFT
-            and not self.primary_market
-        ):
-            errors["primary_market"] = "Primary market is required before submission."
-        if (
-            self.status != BrokerApplicationStatus.DRAFT
-            and not self.operating_state
-        ):
-            errors["operating_state"] = "Operating state is required before submission."
-        if (
-            self.status != BrokerApplicationStatus.DRAFT
-            and not self.license_or_registration_type
-        ):
-            errors["license_or_registration_type"] = (
-                "License or registration type is required before submission."
-            )
-        if (
-            self.status != BrokerApplicationStatus.DRAFT
-            and not self.license_or_registration_number
-        ):
-            errors["license_or_registration_number"] = (
-                "License or registration number is required before submission."
-            )
-        if (
-            self.status != BrokerApplicationStatus.DRAFT
-            and not self.issuing_authority
-        ):
-            errors["issuing_authority"] = "Issuing authority is required before submission."
-        if (
-            self.status != BrokerApplicationStatus.DRAFT
-            and not self.accepted_broker_declaration_at
-        ):
-            errors["accepted_broker_declaration_at"] = (
-                "Broker declaration must be accepted before submission."
-            )
+
+        if self.status != BrokerApplicationStatus.DRAFT and not self.accepted_broker_declaration_at:
+            errors["accepted_broker_declaration_at"] = "Broker declaration must be accepted before submission."
+
 
         if (
             self.status != BrokerApplicationStatus.DRAFT
@@ -162,9 +120,21 @@ class BrokerApplication(models.Model):
             if not self.representative_job_title:
                 errors["representative_job_title"] = "This field is required for company representatives."
             if not self.has_authority_to_represent:
-                errors["has_authority_to_represent"] = (
-                    "Company representatives must declare authority to represent the company."
-                )
+                errors["has_authority_to_represent"] = "Company representatives must declare authority to represent the company."
+
+            if self.years_of_experience is None:
+                errors["years_of_experience"] = "Years of experience is required before submission."
+            if not self.primary_market:
+                errors["primary_market"] = "Primary market is required before submission."
+            if not self.operating_state:
+                errors["operating_state"] = "Operating state is required before submission."
+            if not self.license_or_registration_type:
+                errors["license_or_registration_type"] = "License or registration type is required before submission."
+            if not self.license_or_registration_number:
+                errors["license_or_registration_number"] = "License or registration number is required before submission."
+            if not self.issuing_authority:
+                errors["issuing_authority"] = "Issuing authority is required before submission."
+
 
         if (
             self.status != BrokerApplicationStatus.DRAFT

@@ -72,7 +72,7 @@ def _get_locked_identity_profile(user) -> UserProfile | None:
 def _get_locked_broker_profile(user) -> BrokerProfile | None:
     return (
         BrokerProfile.objects.select_for_update()
-        .select_related("user", "user__profile", "approved_application")
+        .select_related("user")
         .filter(user=user)
         .first()
     )
