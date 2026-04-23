@@ -28,7 +28,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'django.contrib.sites',
     'django.contrib.humanize', #mfa requires this
-    'accounts',
+    'accounts.apps.AccountsConfig',
     'audit',
     'documents',
     'kyc',

@@ -97,6 +97,17 @@ class AllauthApiTests(APITestCase):
         self.assertEqual(confirm_response.data["session"]["user"]["middle_name"], "Antonio")
         self.assertEqual(confirm_response.data["session"]["user"]["last_name"], "Martinez Lopez")
 
+        created_user = User.objects.get(email="pending@example.com")
+        self.assertEqual(created_user.profile.status, "draft")
+
+    def test_login_rejects_invalid_password(self):
+        user = self.create_verified_user()
+
+        response = self.login(email=user.email, password="wrong-password")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("__all__", response.data)
+
     def test_password_reset_flow_is_json_first(self):
         user = self.create_verified_user(email="reset@example.com")
 

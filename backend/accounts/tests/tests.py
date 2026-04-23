@@ -86,6 +86,13 @@ class BrokerWorkflowServiceTests(TempMediaMixin, WorkflowFixturesMixin, APITestC
             is_staff=True,
         )
 
+    def test_user_profile_is_created_for_new_users(self):
+        profile = self.applicant.profile
+
+        self.assertEqual(profile.user_id, self.applicant.id)
+        self.assertEqual(profile.status, IdentityVerificationStatus.DRAFT)
+        self.assertFalse(profile.is_identity_verified)
+
     def _submit_identity_verification(self):
         payload = self.identity_payload()
         payload["id_image"] = self.identity_file()
@@ -277,6 +284,63 @@ class BrokerWorkflowApiTests(TempMediaMixin, WorkflowFixturesMixin, APITestCase)
         payload["id_image"] = self.identity_file()
         return submit_identity_verification(user=self.user, **payload)
 
+    def test_profile_endpoint_returns_auto_created_profile(self):
+        response = self.client.get(reverse("profile"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["email"], self.user.email)
+        self.assertEqual(response.data["first_name"], "Jose")
+        self.assertEqual(response.data["middle_name"], "Antonio")
+        self.assertEqual(response.data["last_name"], "Martinez Lopez")
+        self.assertEqual(response.data["city"], "")
+
+    def test_profile_endpoint_patch_updates_user_and_profile_fields(self):
+        response = self.client.patch(
+            reverse("profile"),
+            {
+                "first_name": "Jose Luis",
+                "middle_name": "",
+                "last_name": "Martinez",
+                "phone": "+521234567890",
+                "state": "Jalisco",
+                "city": "Guadalajara",
+                "address_line_1": "Av. Vallarta 123",
+                "postal_code": "44100",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["first_name"], "Jose Luis")
+        self.assertEqual(response.data["middle_name"], "")
+        self.assertEqual(response.data["last_name"], "Martinez")
+        self.assertEqual(response.data["phone"], "+521234567890")
+        self.assertEqual(response.data["state"], "Jalisco")
+        self.assertEqual(response.data["city"], "Guadalajara")
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.first_name, "Jose Luis")
+        self.assertEqual(self.user.middle_name, "")
+        self.assertEqual(self.user.last_name, "Martinez")
+        self.assertEqual(self.user.phone, "+521234567890")
+        self.assertEqual(self.user.profile.postal_code, "44100")
+
+    def test_profile_endpoint_rejects_invalid_payload(self):
+        response = self.client.patch(
+            reverse("profile"),
+            {
+                "first_name": "J",
+                "phone": "123",
+                "postal_code": "ABCDE",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("first_name", response.data)
+        self.assertIn("phone", response.data)
+        self.assertIn("postal_code", response.data)
+
     def test_identity_verification_endpoints_support_draft_and_submit(self):
         draft_response = self.client.patch(
             reverse("identity-verification"),
@@ -305,6 +369,51 @@ class BrokerWorkflowApiTests(TempMediaMixin, WorkflowFixturesMixin, APITestCase)
             IdentityVerificationStatus.SUBMITTED,
         )
 
+    def test_identity_verification_submit_returns_errors_when_incomplete(self):
+        response = self.client.post(
+            reverse("identity-verification-submit"),
+            {
+                "legal_first_name": "Jose",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("date_of_birth", response.data)
+        self.assertIn("state", response.data)
+        self.assertIn("city", response.data)
+        self.assertIn("address_line_1", response.data)
+        self.assertIn("postal_code", response.data)
+        self.assertIn("id_image", response.data)
+        self.assertIn("non_field_errors", response.data)
+
+    def test_identity_verification_submit_requires_legal_last_name_when_other_fields_exist(self):
+        payload = self.identity_payload()
+        payload["id_image"] = self.identity_file()
+        payload["legal_first_name"] = "Jose"
+        payload["legal_last_name"] = ""
+
+        response = self.client.post(
+            reverse("identity-verification-submit"),
+            payload,
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("legal_last_name", response.data)
+
+    def test_identity_verification_draft_cannot_be_edited_after_submission(self):
+        self._submit_identity_verification_via_service()
+
+        response = self.client.patch(
+            reverse("identity-verification"),
+            {"city": "Guadalajara"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("status", response.data)
+
     def test_broker_application_submit_requires_identity_verification(self):
         submit_response = self.client.post(
             reverse("broker-application-submit"),
@@ -316,6 +425,18 @@ class BrokerWorkflowApiTests(TempMediaMixin, WorkflowFixturesMixin, APITestCase)
         )
         self.assertEqual(submit_response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("identity_verification", submit_response.data)
+
+    def test_broker_application_draft_requires_broker_type_on_first_save(self):
+        response = self.client.patch(
+            reverse("broker-application"),
+            {
+                "brokerage_name": "Escrow Brokers MX",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("broker_type", response.data)
 
     def test_broker_application_endpoints_support_draft_and_submit(self):
         self._submit_identity_verification_via_service()

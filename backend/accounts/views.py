@@ -13,7 +13,9 @@ from accounts.serializers import (
     IdentityVerificationDraftSerializer,
     IdentityVerificationSerializer,
     IdentityVerificationSubmitSerializer,
+    UserProfileSerializer,
 )
+from accounts.models import IdentityVerificationStatus, UserProfile
 from accounts.services.broker import (
     get_broker_application_for_user,
     get_broker_profile_for_user,
@@ -31,6 +33,50 @@ def _raise_drf_validation_error(exc: DjangoValidationError) -> None:
     if hasattr(exc, "message_dict"):
         raise DRFValidationError(exc.message_dict)
     raise DRFValidationError(exc.messages)
+
+
+def _get_or_create_user_profile(user) -> UserProfile:
+    profile, _ = UserProfile.objects.select_related("user").get_or_create(
+        user=user,
+        defaults={"status": IdentityVerificationStatus.DRAFT},
+    )
+    return profile
+
+
+class ProfileView(generics.GenericAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = UserProfileSerializer
+
+    def get_object(self):
+        return _get_or_create_user_profile(self.request.user)
+
+    def get(self, request, *args, **kwargs):
+        serializer = self.get_serializer(self.get_object())
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def patch(self, request, *args, **kwargs):
+        profile = self.get_object()
+        serializer = self.get_serializer(profile, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            profile = serializer.save()
+        except DjangoValidationError as exc:
+            _raise_drf_validation_error(exc)
+
+        return Response(self.get_serializer(profile).data, status=status.HTTP_200_OK)
+
+    def put(self, request, *args, **kwargs):
+        profile = self.get_object()
+        serializer = self.get_serializer(profile, data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            profile = serializer.save()
+        except DjangoValidationError as exc:
+            _raise_drf_validation_error(exc)
+
+        return Response(self.get_serializer(profile).data, status=status.HTTP_200_OK)
 
 
 class IdentityVerificationView(generics.GenericAPIView):

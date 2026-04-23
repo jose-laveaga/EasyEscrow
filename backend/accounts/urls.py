@@ -5,10 +5,12 @@ from accounts.views import (
     BrokerProfileView,
     IdentityVerificationSubmitView,
     IdentityVerificationView,
+    ProfileView,
     index,
 )
 
 urlpatterns = [
+    path("profile/", ProfileView.as_view(), name="profile"),
     path(
         "identity-verification/",
         IdentityVerificationView.as_view(),

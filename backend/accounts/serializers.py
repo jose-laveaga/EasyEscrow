@@ -8,12 +8,48 @@ from accounts.models import (
     GovernmentIDType,
     UserProfile,
 )
+from accounts.validators import name_place_validator, phone_validator
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
+    email = serializers.EmailField(source="user.email", read_only=True)
+    first_name = serializers.CharField(
+        source="user.first_name",
+        max_length=150,
+        required=False,
+        allow_blank=True,
+        validators=[name_place_validator],
+    )
+    middle_name = serializers.CharField(
+        source="user.middle_name",
+        max_length=150,
+        required=False,
+        allow_blank=True,
+        validators=[name_place_validator],
+    )
+    last_name = serializers.CharField(
+        source="user.last_name",
+        max_length=150,
+        required=False,
+        allow_blank=True,
+        validators=[name_place_validator],
+    )
+    phone = serializers.CharField(
+        source="user.phone",
+        max_length=13,
+        required=False,
+        allow_blank=True,
+        validators=[phone_validator],
+    )
+
     class Meta:
         model = UserProfile
         fields = [
+            "email",
+            "first_name",
+            "middle_name",
+            "last_name",
+            "phone",
             "date_of_birth",
             "state",
             "city",
@@ -25,10 +61,27 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = [
+            "email",
             "profile_completed_at",
             "created_at",
             "updated_at",
         ]
+
+    def update(self, instance, validated_data):
+        user_data = validated_data.pop("user", {})
+
+        for field_name, value in user_data.items():
+            setattr(instance.user, field_name, value)
+
+        for field_name, value in validated_data.items():
+            setattr(instance, field_name, value)
+
+        instance.user.full_clean()
+        instance.user.save()
+        instance.full_clean()
+        instance.save()
+
+        return instance
 
 
 class IdentityVerificationSummarySerializer(serializers.ModelSerializer):
