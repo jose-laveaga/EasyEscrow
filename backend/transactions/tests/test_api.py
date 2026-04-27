@@ -2,8 +2,15 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from transactions.models import InvitationStatus, ParticipantRole, ParticipantStatus, TransactionType
+from transactions.models import (
+    InvitationStatus,
+    ParticipantRole,
+    ParticipantStatus,
+    TransactionStatus,
+    TransactionType,
+)
 from transactions.services.invitation import invite_participant
+from transactions.services.participant import add_participant
 from transactions.tests.test_fixtures import TransactionFixturesMixin
 
 
@@ -109,3 +116,83 @@ class TransactionApiTests(TransactionFixturesMixin, APITestCase):
 
         self.assertEqual(reject_response.status_code, status.HTTP_200_OK)
         self.assertEqual(reject_response.data["status"], InvitationStatus.DECLINED)
+
+    def test_transaction_mine_endpoint_groups_draft_and_active_transactions(self):
+        broker = self.create_broker("broker@example.com")
+        buyer = self.create_user("buyer@example.com")
+        draft_transaction = self.create_transaction_for_broker(
+            broker,
+            title="Draft transaction",
+        )
+        active_transaction = self.create_transaction_for_broker(
+            broker,
+            title="Active transaction",
+        )
+        add_participant(
+            transaction=active_transaction,
+            user=buyer,
+            role=ParticipantRole.BUYER,
+        )
+        seller = self.create_user("seller@example.com")
+        add_participant(
+            transaction=active_transaction,
+            user=seller,
+            role=ParticipantRole.SELLER,
+        )
+        completed_transaction = self.create_transaction_for_broker(
+            broker,
+            title="Completed transaction",
+        )
+        completed_transaction.status = TransactionStatus.COMPLETED
+        completed_transaction.save(update_fields=["status", "updated_at"])
+
+        self.client.force_authenticate(user=broker)
+        response = self.client.get(reverse("transaction-mine"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["draft"]), 1)
+        self.assertEqual(response.data["draft"][0]["id"], str(draft_transaction.id))
+        self.assertEqual(len(response.data["active"]), 1)
+        self.assertEqual(response.data["active"][0]["id"], str(active_transaction.id))
+
+    def test_invitation_mine_endpoint_groups_sent_and_received_invitations(self):
+        broker = self.create_broker("broker@example.com")
+        buyer = self.create_user("buyer@example.com")
+        seller = self.create_user("seller@example.com")
+        transaction = self.create_transaction_for_broker(broker)
+
+        sent_to_user = invite_participant(
+            transaction=transaction,
+            sent_by_user=broker,
+            intended_role=ParticipantRole.BUYER,
+            target_user=buyer,
+        )
+        sent_to_email = invite_participant(
+            transaction=transaction,
+            sent_by_user=broker,
+            intended_role=ParticipantRole.SELLER,
+            target_email=seller.email,
+        )
+
+        self.client.force_authenticate(user=broker)
+        broker_response = self.client.get(reverse("invitation-mine"))
+
+        self.assertEqual(broker_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(broker_response.data["sent"]), 2)
+        self.assertEqual(broker_response.data["received"], [])
+
+        self.client.force_authenticate(user=buyer)
+        buyer_response = self.client.get(reverse("invitation-mine"))
+
+        self.assertEqual(buyer_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(buyer_response.data["sent"], [])
+        self.assertEqual(len(buyer_response.data["received"]), 1)
+        self.assertEqual(buyer_response.data["received"][0]["id"], str(sent_to_user.id))
+
+        self.client.force_authenticate(user=seller)
+        seller_response = self.client.get(reverse("invitation-mine"))
+
+        self.assertEqual(seller_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(seller_response.data["sent"], [])
+        self.assertEqual(len(seller_response.data["received"]), 1)
+        self.assertEqual(seller_response.data["received"][0]["id"], str(sent_to_email.id))

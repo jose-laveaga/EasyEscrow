@@ -1,6 +1,20 @@
 from django.db.models import Prefetch, Q
 
-from transactions.models import Invitation, ParticipantStatus, Transaction, TransactionParticipant
+from transactions.models import (
+    Invitation,
+    ParticipantStatus,
+    Transaction,
+    TransactionParticipant,
+    TransactionStatus,
+)
+from transactions.services.invitation import expire_stale_pending_invitations
+
+
+TERMINAL_TRANSACTION_STATUSES = {
+    TransactionStatus.COMPLETED,
+    TransactionStatus.CANCELLED,
+    TransactionStatus.FAILED,
+}
 
 
 def _participant_queryset():
@@ -17,7 +31,7 @@ def _invitation_queryset():
 
 
 def get_transactions_visible_to_user(*, user):
-    return (
+    queryset = (
         Transaction.objects.select_related("property", "created_by")
         .prefetch_related(Prefetch("participants", queryset=_participant_queryset()))
         .filter(
@@ -29,12 +43,42 @@ def get_transactions_visible_to_user(*, user):
         )
         .distinct()
     )
+    transaction_ids = list(queryset.values_list("pk", flat=True))
+    if transaction_ids:
+        expire_stale_pending_invitations(transaction_ids=transaction_ids)
+    return queryset
 
 
 def get_transaction_visible_to_user(*, user, transaction_id):
+    visible_transaction = get_transactions_visible_to_user(user=user).filter(pk=transaction_id).first()
+    if visible_transaction is None:
+        return None
+
     return (
         get_transactions_visible_to_user(user=user)
         .prefetch_related(Prefetch("invitations", queryset=_invitation_queryset()))
-        .filter(pk=transaction_id)
+        .filter(pk=visible_transaction.pk)
         .first()
     )
+
+
+def get_user_draft_and_active_transactions(*, user):
+    visible_transactions = get_transactions_visible_to_user(user=user)
+    return {
+        "draft": visible_transactions.filter(status=TransactionStatus.DRAFT),
+        "active": visible_transactions.exclude(
+            status__in=TERMINAL_TRANSACTION_STATUSES | {TransactionStatus.DRAFT}
+        ),
+    }
+
+
+def get_user_invitations(*, user):
+    expire_stale_pending_invitations(user=user)
+    base_queryset = _invitation_queryset()
+    return {
+        "sent": base_queryset.filter(sent_by_user=user),
+        "received": base_queryset.filter(
+            Q(target_user=user)
+            | Q(target_user__isnull=True, target_email__iexact=user.email)
+        ).distinct(),
+    }

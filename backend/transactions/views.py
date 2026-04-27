@@ -6,7 +6,12 @@ from rest_framework.response import Response
 
 from accounts.permissions import CanCreateTransactions
 from transactions.models import Invitation
-from transactions.selectors import get_transaction_visible_to_user, get_transactions_visible_to_user
+from transactions.selectors import (
+    get_transaction_visible_to_user,
+    get_transactions_visible_to_user,
+    get_user_draft_and_active_transactions,
+    get_user_invitations,
+)
 from transactions.serializers import (
     InvitationActionSerializer,
     InvitationCreateSerializer,
@@ -14,6 +19,7 @@ from transactions.serializers import (
     TransactionCreateSerializer,
     TransactionParticipantSerializer,
     TransactionSerializer,
+    UserInvitationSerializer,
 )
 from transactions.services.invitation import accept_invitation, invite_participant, reject_invitation
 from transactions.services.transaction import create_transaction
@@ -90,6 +96,30 @@ class TransactionParticipantsView(generics.GenericAPIView):
         transaction = self.get_object()
         serializer = TransactionParticipantSerializer(transaction.participants.all(), many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class UserTransactionOverviewView(generics.GenericAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        grouped_transactions = get_user_draft_and_active_transactions(user=request.user)
+        response_data = {
+            "draft": TransactionSerializer(grouped_transactions["draft"], many=True).data,
+            "active": TransactionSerializer(grouped_transactions["active"], many=True).data,
+        }
+        return Response(response_data, status=status.HTTP_200_OK)
+
+
+class UserInvitationOverviewView(generics.GenericAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        grouped_invitations = get_user_invitations(user=request.user)
+        response_data = {
+            "sent": UserInvitationSerializer(grouped_invitations["sent"], many=True).data,
+            "received": UserInvitationSerializer(grouped_invitations["received"], many=True).data,
+        }
+        return Response(response_data, status=status.HTTP_200_OK)
 
 
 class TransactionInvitationCreateView(generics.GenericAPIView):

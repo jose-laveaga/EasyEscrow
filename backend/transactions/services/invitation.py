@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import timedelta
 import secrets
 
+from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
-from django.db import transaction as db_transaction
+from django.db import IntegrityError, transaction as db_transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from transactions.models import (
@@ -29,10 +31,15 @@ SINGLE_OCCUPANT_INVITATION_ROLES = {
     ParticipantRole.SELLER,
     ParticipantRole.ESCROW_OFFICER,
 }
+User = get_user_model()
 
 
 def _normalize_email(email: str) -> str:
     return (email or "").strip().lower()
+
+
+def _lock_transaction(transaction: Transaction) -> Transaction:
+    return Transaction.objects.select_for_update().get(pk=transaction.pk)
 
 
 def _lock_invitation(invitation: Invitation) -> Invitation:
@@ -41,6 +48,53 @@ def _lock_invitation(invitation: Invitation) -> Invitation:
         "sent_by_user",
         "target_user",
     ).get(pk=invitation.pk)
+
+
+def _raise_invitation_integrity_validation_error(error: IntegrityError) -> None:
+    message = str(error)
+    if "uniq_pending_invitation_per_target_user" in message:
+        raise ValidationError({"target_user": "This user already has a pending invitation for this transaction."}) from error
+    if "uniq_pending_invitation_per_target_email" in message:
+        raise ValidationError({"target_email": "This email already has a pending invitation for this transaction."}) from error
+    if "uniq_pending_invitation_per_single_role" in message:
+        raise ValidationError({"intended_role": "This role already has a pending invitation in this transaction."}) from error
+    raise ValidationError({"invitation": "Invitation conflicts with an existing pending invitation."}) from error
+
+
+def expire_stale_pending_invitations(
+    *,
+    transaction_ids=None,
+    user=None,
+    sync_transactions=True,
+) -> int:
+    now = timezone.now()
+    invitations = Invitation.objects.filter(
+        status=InvitationStatus.PENDING,
+        expires_at__lte=now,
+    )
+
+    if transaction_ids is not None:
+        invitations = invitations.filter(transaction_id__in=transaction_ids)
+
+    if user is not None:
+        invitations = invitations.filter(
+            Q(sent_by_user=user)
+            | Q(target_user=user)
+            | Q(target_user__isnull=True, target_email__iexact=user.email)
+        )
+
+    transaction_ids_to_sync = list(
+        invitations.values_list("transaction_id", flat=True).distinct()
+    )
+    updated_count = invitations.update(status=InvitationStatus.EXPIRED, updated_at=now)
+
+    if updated_count and sync_transactions:
+        from .transaction import sync_transaction_setup_status
+
+        for transaction in Transaction.objects.filter(pk__in=transaction_ids_to_sync):
+            sync_transaction_setup_status(transaction=transaction)
+
+    return updated_count
 
 
 def _ensure_sender_can_invite(*, transaction: Transaction, sent_by_user) -> None:
@@ -53,6 +107,15 @@ def _ensure_sender_can_invite(*, transaction: Transaction, sent_by_user) -> None
     if not can_invite:
         raise ValidationError(
             {"sent_by_user": "Only active broker participants can send invitations for this transaction."}
+        )
+
+
+def _ensure_purchase_agreement_uploaded(*, transaction: Transaction) -> None:
+    from documents.services.purchase_agreement import transaction_has_purchase_agreement
+
+    if not transaction_has_purchase_agreement(transaction=transaction):
+        raise ValidationError(
+            {"purchase_agreement": "Upload the purchase agreement before sending invitations."}
         )
 
 
@@ -117,6 +180,8 @@ def _resolve_acting_user(invitation: Invitation, acting_user):
 
 
 def _ensure_invitation_is_pending(*, invitation: Invitation) -> None:
+    if invitation.status == InvitationStatus.EXPIRED:
+        raise ValidationError({"invitation": "This invitation has expired."})
     if invitation.status != InvitationStatus.PENDING:
         raise ValidationError({"invitation": "This invitation is no longer pending."})
 
@@ -142,7 +207,11 @@ def invite_participant(
     delivery_method="EMAIL",
     expires_at=None,
 ) -> Invitation:
+    transaction = _lock_transaction(transaction)
+    expire_stale_pending_invitations(transaction_ids=[transaction.pk], sync_transactions=False)
+
     _ensure_sender_can_invite(transaction=transaction, sent_by_user=sent_by_user)
+    _ensure_purchase_agreement_uploaded(transaction=transaction)
     _validate_invitation_role(transaction=transaction, intended_role=intended_role)
 
     normalized_email = _normalize_email(target_email)
@@ -160,21 +229,24 @@ def invite_participant(
     if expires_at <= timezone.now():
         raise ValidationError({"expires_at": "expires_at must be in the future."})
 
-    if target_user is not None:
-        from .participant import validate_participant_role_assignment
+    from .participant import validate_participant_role_assignment
 
+    if target_user is not None:
         validate_participant_role_assignment(
             transaction=transaction,
             user=target_user,
             role=intended_role,
         )
-    elif intended_role in {
-        ParticipantRole.PRIMARY_BROKER,
-        ParticipantRole.COOPERATING_BROKER,
-        ParticipantRole.BUYER,
-        ParticipantRole.SELLER,
-        ParticipantRole.ESCROW_OFFICER,
-    } and TransactionParticipant.objects.filter(
+    else:
+        target_email_user = User.objects.filter(email__iexact=normalized_email).first()
+        if target_email_user is not None:
+            validate_participant_role_assignment(
+                transaction=transaction,
+                user=target_email_user,
+                role=intended_role,
+            )
+
+    if target_user is None and intended_role in SINGLE_OCCUPANT_INVITATION_ROLES and TransactionParticipant.objects.filter(
         transaction=transaction,
         role=intended_role,
         status=ParticipantStatus.ACTIVE,
@@ -200,7 +272,11 @@ def invite_participant(
         expires_at=expires_at,
     )
     invitation.full_clean()
-    invitation.save()
+    try:
+        with db_transaction.atomic():
+            invitation.save()
+    except IntegrityError as error:
+        _raise_invitation_integrity_validation_error(error)
 
     from .transaction import sync_transaction_setup_status
 
@@ -295,6 +371,9 @@ def revoke_invitation(*, invitation: Invitation, acting_user) -> Invitation:
         raise ValidationError(
             {"acting_user": "Only active broker participants can revoke invitations for this transaction."}
         )
+
+    if invitation.expires_at <= timezone.now():
+        return _mark_invitation_expired(invitation=invitation)
 
     invitation.status = InvitationStatus.REVOKED
     invitation.revoked_at = timezone.now()

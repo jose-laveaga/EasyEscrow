@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from django.core.exceptions import ValidationError
-from django.db import transaction as db_transaction
+from django.db import IntegrityError, transaction as db_transaction
 from django.utils import timezone
 
 from accounts.services.broker import user_can_create_transactions
@@ -24,6 +24,22 @@ BROKER_ROLES = {
     ParticipantRole.PRIMARY_BROKER,
     ParticipantRole.COOPERATING_BROKER,
 }
+
+
+def _lock_transaction(transaction: Transaction) -> Transaction:
+    return Transaction.objects.select_for_update().get(pk=transaction.pk)
+
+
+def _raise_participant_integrity_validation_error(error: IntegrityError) -> None:
+    message = str(error)
+    if "uniq_transaction_user" in message or "transaction_id, user_id" in message:
+        raise ValidationError({"user": "This user is already a participant in this transaction."}) from error
+    if (
+        "uniq_active_single_role_per_transaction" in message
+        or "transaction_id, role" in message
+    ):
+        raise ValidationError({"role": "This role is already assigned in this transaction."}) from error
+    raise ValidationError({"participant": "Participant assignment conflicts with an existing participant."}) from error
 
 
 def validate_participant_role_assignment(*, transaction: Transaction, user, role) -> None:
@@ -61,6 +77,7 @@ def add_participant(
     role,
     status=ParticipantStatus.ACTIVE,
 ) -> TransactionParticipant:
+    transaction = _lock_transaction(transaction)
     validate_participant_role_assignment(
         transaction=transaction,
         user=user,
@@ -76,7 +93,11 @@ def add_participant(
         left_at=timezone.now() if status == ParticipantStatus.LEFT else None,
     )
     participant.full_clean()
-    participant.save()
+    try:
+        with db_transaction.atomic():
+            participant.save()
+    except IntegrityError as error:
+        _raise_participant_integrity_validation_error(error)
 
     from .transaction import sync_transaction_setup_status
 

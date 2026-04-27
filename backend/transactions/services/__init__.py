@@ -1,6 +1,7 @@
 from .invitation import (
     accept_invitation,
     expire_invitation,
+    expire_stale_pending_invitations,
     invite_participant,
     reject_invitation,
     revoke_invitation,
@@ -13,6 +14,7 @@ __all__ = [
     "add_participant",
     "create_transaction",
     "expire_invitation",
+    "expire_stale_pending_invitations",
     "invite_participant",
     "reject_invitation",
     "revoke_invitation",

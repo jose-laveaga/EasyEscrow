@@ -124,6 +124,10 @@ def sync_transaction_setup_status(*, transaction: Transaction) -> Transaction:
     if transaction.status not in SYNCABLE_SETUP_STATUSES:
         return transaction
 
+    from .invitation import expire_stale_pending_invitations
+
+    expire_stale_pending_invitations(transaction_ids=[transaction.pk], sync_transactions=False)
+
     active_roles = set(
         transaction.participants.filter(status=ParticipantStatus.ACTIVE).values_list("role", flat=True)
     )

@@ -97,6 +97,46 @@ class InvitationSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class InvitationTransactionSummarySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Transaction
+        fields = [
+            "id",
+            "reference_code",
+            "transaction_type",
+            "status",
+            "title",
+        ]
+        read_only_fields = fields
+
+
+class UserInvitationSerializer(serializers.ModelSerializer):
+    transaction = InvitationTransactionSummarySerializer(read_only=True)
+    sent_by_user = TransactionUserSerializer(read_only=True)
+    target_user = TransactionUserSerializer(read_only=True)
+
+    class Meta:
+        model = Invitation
+        fields = [
+            "id",
+            "transaction",
+            "sent_by_user",
+            "target_user",
+            "target_email",
+            "intended_role",
+            "delivery_method",
+            "status",
+            "expires_at",
+            "responded_at",
+            "accepted_at",
+            "declined_at",
+            "revoked_at",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+
 class TransactionSerializer(serializers.ModelSerializer):
     property = PropertySerializer(read_only=True)
     created_by = TransactionUserSerializer(read_only=True)

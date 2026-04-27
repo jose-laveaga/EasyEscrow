@@ -1,6 +1,12 @@
 from django.utils import timezone
 
 from accounts.models import BrokerProfile, BrokerType, IdentityVerificationStatus, User
+from documents.models import (
+    DocumentType,
+    PurchaseAgreement,
+    PurchaseAgreementExtractionStatus,
+    TransactionDocument,
+)
 from transactions.models import TransactionType
 from transactions.services.transaction import create_transaction
 
@@ -37,11 +43,28 @@ class TransactionFixturesMixin:
         self.make_eligible_broker(user)
         return user
 
-    def create_transaction_for_broker(self, broker, **overrides):
+    def attach_purchase_agreement(self, transaction):
+        document = TransactionDocument.objects.create(
+            transaction=transaction,
+            uploaded_by_user=transaction.created_by,
+            document_type=DocumentType.PURCHASE_AGREEMENT,
+            title="Purchase agreement",
+            file="transactions/documents/purchase-agreement.pdf",
+            is_required=True,
+        )
+        return PurchaseAgreement.objects.create(
+            document=document,
+            extraction_status=PurchaseAgreementExtractionStatus.REVIEW_REQUIRED,
+        )
+
+    def create_transaction_for_broker(self, broker, *, with_purchase_agreement=True, **overrides):
         payload = {
             "title": "Casa Azul Purchase",
             "description": "Escrow setup for the purchase transaction.",
             "transaction_type": TransactionType.STANDARD,
         }
         payload.update(overrides)
-        return create_transaction(created_by=broker, **payload)
+        transaction = create_transaction(created_by=broker, **payload)
+        if with_purchase_agreement:
+            self.attach_purchase_agreement(transaction)
+        return transaction

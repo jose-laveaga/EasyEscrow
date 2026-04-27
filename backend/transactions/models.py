@@ -3,6 +3,7 @@ import uuid
 from django.conf import settings
 from django.db import models
 from django.db.models import Q
+from django.db.models.functions import Lower
 
 
 class TransactionType(models.TextChoices):
@@ -167,6 +168,7 @@ class TransactionParticipant(models.Model):
                         ParticipantRole.BUYER,
                         ParticipantRole.SELLER,
                         ParticipantRole.PRIMARY_BROKER,
+                        ParticipantRole.COOPERATING_BROKER,
                         ParticipantRole.ESCROW_OFFICER,
                     ]
                 ),
@@ -231,6 +233,31 @@ class Invitation(models.Model):
             models.CheckConstraint(
                 condition=Q(target_user__isnull=False) | ~Q(target_email=""),
                 name="invitation_requires_target_user_or_email",
+            ),
+            models.UniqueConstraint(
+                fields=["transaction", "target_user"],
+                condition=Q(status=InvitationStatus.PENDING) & Q(target_user__isnull=False),
+                name="uniq_pending_invitation_per_target_user",
+            ),
+            models.UniqueConstraint(
+                "transaction",
+                Lower("target_email"),
+                condition=Q(status=InvitationStatus.PENDING) & ~Q(target_email=""),
+                name="uniq_pending_invitation_per_target_email",
+            ),
+            models.UniqueConstraint(
+                fields=["transaction", "intended_role"],
+                condition=Q(status=InvitationStatus.PENDING)
+                & Q(
+                    intended_role__in=[
+                        ParticipantRole.BUYER,
+                        ParticipantRole.SELLER,
+                        ParticipantRole.PRIMARY_BROKER,
+                        ParticipantRole.COOPERATING_BROKER,
+                        ParticipantRole.ESCROW_OFFICER,
+                    ]
+                ),
+                name="uniq_pending_invitation_per_single_role",
             ),
         ]
 

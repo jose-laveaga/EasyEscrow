@@ -10,6 +10,9 @@ pillow==12.2.0
 pip==26.0.1
 psycopg2==2.9.11
 pycparser==3.0
+factory_boy==3.3.3
+pytest==9.0.2
+pytest-django==4.11.1
 python-dotenv==1.2.2
 qrcode==8.2
 sqlparse==0.5.5

@@ -1,10 +1,12 @@
 from datetime import timedelta
 
 from django.core.exceptions import ValidationError
+from django.db import IntegrityError, transaction as db_transaction
 from django.test import TestCase
 from django.utils import timezone
 
 from transactions.models import (
+    Invitation,
     InvitationStatus,
     ParticipantRole,
     ParticipantStatus,
@@ -12,6 +14,7 @@ from transactions.models import (
     TransactionStatus,
     TransactionType,
 )
+from transactions.selectors import get_user_invitations
 from transactions.services.invitation import accept_invitation, invite_participant, reject_invitation
 from transactions.services.participant import add_participant
 from transactions.services.transaction import create_transaction, sync_transaction_setup_status
@@ -67,6 +70,25 @@ class TransactionServiceTests(TransactionFixturesMixin, TestCase):
         self.assertEqual(invitation.target_user, buyer)
         self.assertEqual(invitation.target_email, buyer.email)
         self.assertEqual(invitation.status, InvitationStatus.PENDING)
+
+    def test_invitation_requires_uploaded_purchase_agreement(self):
+        broker = self.create_broker("broker@example.com")
+        buyer = self.create_user("buyer@example.com")
+        transaction = create_transaction(
+            created_by=broker,
+            title="Missing agreement workflow",
+            transaction_type=TransactionType.STANDARD,
+        )
+
+        with self.assertRaises(ValidationError) as context:
+            invite_participant(
+                transaction=transaction,
+                sent_by_user=broker,
+                intended_role=ParticipantRole.BUYER,
+                target_user=buyer,
+            )
+
+        self.assertIn("purchase_agreement", context.exception.message_dict)
 
     def test_invitation_can_be_sent_by_email_only(self):
         broker = self.create_broker("broker@example.com")
@@ -215,6 +237,101 @@ class TransactionServiceTests(TransactionFixturesMixin, TestCase):
                 sent_by_user=broker,
                 intended_role=ParticipantRole.BUYER,
                 target_user=buyer,
+            )
+
+    def test_email_only_invitation_to_existing_active_participant_is_blocked(self):
+        broker = self.create_broker("broker@example.com")
+        buyer = self.create_user("buyer@example.com")
+        transaction = self.create_transaction_for_broker(broker)
+
+        add_participant(transaction=transaction, user=buyer, role=ParticipantRole.BUYER)
+
+        with self.assertRaises(ValidationError):
+            invite_participant(
+                transaction=transaction,
+                sent_by_user=broker,
+                intended_role=ParticipantRole.SELLER,
+                target_email="BUYER@example.com",
+            )
+
+    def test_email_only_invitation_to_existing_user_with_occupied_role_is_blocked(self):
+        broker = self.create_broker("broker@example.com")
+        buyer = self.create_user("buyer@example.com")
+        second_buyer = self.create_user("second-buyer@example.com")
+        transaction = self.create_transaction_for_broker(broker)
+
+        add_participant(transaction=transaction, user=buyer, role=ParticipantRole.BUYER)
+
+        with self.assertRaises(ValidationError):
+            invite_participant(
+                transaction=transaction,
+                sent_by_user=broker,
+                intended_role=ParticipantRole.BUYER,
+                target_email=second_buyer.email,
+            )
+
+    def test_user_invitation_selector_marks_expired_pending_invitations_expired(self):
+        broker = self.create_broker("broker@example.com")
+        buyer = self.create_user("buyer@example.com")
+        transaction = self.create_transaction_for_broker(broker)
+        invitation = invite_participant(
+            transaction=transaction,
+            sent_by_user=broker,
+            intended_role=ParticipantRole.BUYER,
+            target_user=buyer,
+        )
+        invitation.expires_at = timezone.now() - timedelta(minutes=1)
+        invitation.save(update_fields=["expires_at"])
+
+        grouped_invitations = get_user_invitations(user=buyer)
+
+        invitation.refresh_from_db()
+        self.assertEqual(invitation.status, InvitationStatus.EXPIRED)
+        self.assertEqual(list(grouped_invitations["received"]), [invitation])
+
+    def test_database_blocks_duplicate_active_cooperating_broker(self):
+        primary_broker = self.create_broker("primary@example.com")
+        cooperating_broker = self.create_broker("cooperating@example.com")
+        second_cooperating_broker = self.create_broker("second-cooperating@example.com")
+        transaction = self.create_transaction_for_broker(
+            primary_broker,
+            transaction_type=TransactionType.DOUBLE_BROKER,
+        )
+
+        add_participant(
+            transaction=transaction,
+            user=cooperating_broker,
+            role=ParticipantRole.COOPERATING_BROKER,
+        )
+
+        with self.assertRaises(IntegrityError), db_transaction.atomic():
+            TransactionParticipant.objects.create(
+                transaction=transaction,
+                user=second_cooperating_broker,
+                role=ParticipantRole.COOPERATING_BROKER,
+                status=ParticipantStatus.ACTIVE,
+                joined_at=timezone.now(),
+            )
+
+    def test_database_blocks_duplicate_pending_invitation_email(self):
+        broker = self.create_broker("broker@example.com")
+        transaction = self.create_transaction_for_broker(broker)
+        invitation = invite_participant(
+            transaction=transaction,
+            sent_by_user=broker,
+            intended_role=ParticipantRole.BUYER,
+            target_email="Buyer@example.com",
+        )
+
+        with self.assertRaises(IntegrityError), db_transaction.atomic():
+            Invitation.objects.create(
+                transaction=transaction,
+                sent_by_user=broker,
+                target_email="buyer@example.com",
+                intended_role=ParticipantRole.SELLER,
+                token="duplicate-email-token",
+                status=InvitationStatus.PENDING,
+                expires_at=invitation.expires_at,
             )
 
     def test_non_matching_user_cannot_accept_invitation(self):
