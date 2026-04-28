@@ -54,6 +54,34 @@ class InvitationDeliveryMethod(models.TextChoices):
     QR = "QR", "QR"
 
 
+class CommissionAgreementStatus(models.TextChoices):
+    DRAFT = "DRAFT", "Draft"
+    PROPOSED = "PROPOSED", "Proposed"
+    COUNTERED = "COUNTERED", "Countered"
+    ACCEPTED = "ACCEPTED", "Accepted"
+    REJECTED = "REJECTED", "Rejected"
+    SUPERSEDED = "SUPERSEDED", "Superseded"
+
+
+class CommissionBasis(models.TextChoices):
+    FIXED_AMOUNT = "FIXED_AMOUNT", "Fixed amount"
+    PERCENT_OF_PURCHASE_PRICE = "PERCENT_OF_PURCHASE_PRICE", "Percent of purchase price"
+
+
+class CommissionPaymentSource(models.TextChoices):
+    SELLER_PROCEEDS = "SELLER_PROCEEDS", "Seller proceeds"
+    BUYER_FUNDS = "BUYER_FUNDS", "Buyer funds"
+    CLOSING_FUNDS = "CLOSING_FUNDS", "Closing funds"
+    OTHER = "OTHER", "Other"
+
+
+class CommissionPayableEvent(models.TextChoices):
+    AT_CLOSING = "AT_CLOSING", "At closing"
+    UPON_FUNDING = "UPON_FUNDING", "Upon funding"
+    AFTER_CONDITION = "AFTER_CONDITION", "After condition"
+    OTHER = "OTHER", "Other"
+
+
 class Property(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     address_line1 = models.CharField(max_length=255)
@@ -178,6 +206,93 @@ class TransactionParticipant(models.Model):
 
     def __str__(self) -> str:
         return f"{self.transaction.reference_code} - {self.user} - {self.role}"
+
+
+class BrokerCommissionAgreement(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    transaction = models.OneToOneField(
+        Transaction,
+        on_delete=models.CASCADE,
+        related_name="commission_agreement",
+    )
+    status = models.CharField(
+        max_length=30,
+        choices=CommissionAgreementStatus.choices,
+        default=CommissionAgreementStatus.DRAFT,
+    )
+    commission_basis = models.CharField(
+        max_length=40,
+        choices=CommissionBasis.choices,
+    )
+    total_commission_amount = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    total_commission_percentage = models.DecimalField(
+        max_digits=7,
+        decimal_places=4,
+        null=True,
+        blank=True,
+    )
+    currency = models.CharField(max_length=10, default="MXN")
+    primary_broker_share_amount = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    primary_broker_share_percentage = models.DecimalField(
+        max_digits=7,
+        decimal_places=4,
+        null=True,
+        blank=True,
+    )
+    cooperating_broker_share_amount = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    cooperating_broker_share_percentage = models.DecimalField(
+        max_digits=7,
+        decimal_places=4,
+        null=True,
+        blank=True,
+    )
+    payment_source = models.CharField(
+        max_length=40,
+        choices=CommissionPaymentSource.choices,
+        default=CommissionPaymentSource.CLOSING_FUNDS,
+    )
+    payable_event = models.CharField(
+        max_length=40,
+        choices=CommissionPayableEvent.choices,
+        default=CommissionPayableEvent.AT_CLOSING,
+    )
+    notes = models.TextField(blank=True)
+    proposed_by_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="proposed_commission_agreements",
+    )
+    accepted_by_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="accepted_commission_agreements",
+        null=True,
+        blank=True,
+    )
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+
+    def __str__(self) -> str:
+        return f"{self.transaction.reference_code} - {self.status}"
 
 
 class Invitation(models.Model):

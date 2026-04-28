@@ -13,6 +13,9 @@ from transactions.selectors import (
     get_user_invitations,
 )
 from transactions.serializers import (
+    BrokerCommissionAgreementActionSerializer,
+    BrokerCommissionAgreementProposeSerializer,
+    BrokerCommissionAgreementSerializer,
     InvitationActionSerializer,
     InvitationCreateSerializer,
     InvitationSerializer,
@@ -20,6 +23,11 @@ from transactions.serializers import (
     TransactionParticipantSerializer,
     TransactionSerializer,
     UserInvitationSerializer,
+)
+from transactions.services.commission import (
+    accept_commission_agreement,
+    get_commission_agreement,
+    propose_commission_agreement,
 )
 from transactions.services.invitation import accept_invitation, invite_participant, reject_invitation
 from transactions.services.transaction import create_transaction
@@ -95,6 +103,74 @@ class TransactionParticipantsView(generics.GenericAPIView):
     def get(self, request, *args, **kwargs):
         transaction = self.get_object()
         serializer = TransactionParticipantSerializer(transaction.participants.all(), many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class TransactionCommissionAgreementView(generics.GenericAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            return BrokerCommissionAgreementProposeSerializer
+        return BrokerCommissionAgreementSerializer
+
+    def get_transaction(self):
+        transaction = get_transaction_visible_to_user(
+            user=self.request.user,
+            transaction_id=self.kwargs["pk"],
+        )
+        if transaction is None:
+            raise Http404("Transaction not found.")
+        return transaction
+
+    def get(self, request, *args, **kwargs):
+        agreement = get_commission_agreement(transaction=self.get_transaction())
+        if agreement is None:
+            raise Http404("Commission agreement not found.")
+        serializer = BrokerCommissionAgreementSerializer(agreement)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request, *args, **kwargs):
+        transaction = self.get_transaction()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            agreement = propose_commission_agreement(
+                transaction=transaction,
+                proposed_by_user=request.user,
+                **serializer.validated_data,
+            )
+        except DjangoValidationError as exc:
+            _raise_drf_validation_error(exc)
+
+        response_serializer = BrokerCommissionAgreementSerializer(agreement)
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+
+
+class TransactionCommissionAgreementAcceptView(generics.GenericAPIView):
+    serializer_class = BrokerCommissionAgreementActionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_transaction(self):
+        transaction = get_transaction_visible_to_user(
+            user=self.request.user,
+            transaction_id=self.kwargs["pk"],
+        )
+        if transaction is None:
+            raise Http404("Transaction not found.")
+        return transaction
+
+    def post(self, request, *args, **kwargs):
+        try:
+            agreement = accept_commission_agreement(
+                transaction=self.get_transaction(),
+                accepted_by_user=request.user,
+            )
+        except DjangoValidationError as exc:
+            _raise_drf_validation_error(exc)
+
+        serializer = BrokerCommissionAgreementSerializer(agreement)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 

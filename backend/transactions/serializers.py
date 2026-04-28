@@ -2,6 +2,8 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from transactions.models import (
+    BrokerCommissionAgreement,
+    CommissionBasis,
     Invitation,
     InvitationDeliveryMethod,
     Property,
@@ -165,6 +167,90 @@ class TransactionSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = fields
+
+
+class BrokerCommissionAgreementSerializer(serializers.ModelSerializer):
+    proposed_by_user = TransactionUserSerializer(read_only=True)
+    accepted_by_user = TransactionUserSerializer(read_only=True)
+
+    class Meta:
+        model = BrokerCommissionAgreement
+        fields = [
+            "id",
+            "transaction",
+            "status",
+            "commission_basis",
+            "total_commission_amount",
+            "total_commission_percentage",
+            "currency",
+            "primary_broker_share_amount",
+            "primary_broker_share_percentage",
+            "cooperating_broker_share_amount",
+            "cooperating_broker_share_percentage",
+            "payment_source",
+            "payable_event",
+            "notes",
+            "proposed_by_user",
+            "accepted_by_user",
+            "accepted_at",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+
+class BrokerCommissionAgreementProposeSerializer(serializers.Serializer):
+    commission_basis = serializers.ChoiceField(choices=CommissionBasis.choices)
+    total_commission_amount = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        required=False,
+        allow_null=True,
+    )
+    total_commission_percentage = serializers.DecimalField(
+        max_digits=7,
+        decimal_places=4,
+        required=False,
+        allow_null=True,
+    )
+    currency = serializers.CharField(max_length=10, required=False, default="MXN")
+    primary_broker_share_amount = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        required=False,
+        allow_null=True,
+    )
+    primary_broker_share_percentage = serializers.DecimalField(
+        max_digits=7,
+        decimal_places=4,
+        required=False,
+        allow_null=True,
+    )
+    cooperating_broker_share_amount = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        required=False,
+        allow_null=True,
+    )
+    cooperating_broker_share_percentage = serializers.DecimalField(
+        max_digits=7,
+        decimal_places=4,
+        required=False,
+        allow_null=True,
+    )
+    payment_source = serializers.ChoiceField(
+        choices=BrokerCommissionAgreement._meta.get_field("payment_source").choices,
+        required=False,
+    )
+    payable_event = serializers.ChoiceField(
+        choices=BrokerCommissionAgreement._meta.get_field("payable_event").choices,
+        required=False,
+    )
+    notes = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class BrokerCommissionAgreementActionSerializer(serializers.Serializer):
+    pass
 
 
 class TransactionCreateSerializer(serializers.Serializer):

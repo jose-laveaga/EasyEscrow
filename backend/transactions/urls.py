@@ -3,6 +3,8 @@ from django.urls import path
 from transactions.views import (
     InvitationAcceptView,
     InvitationRejectView,
+    TransactionCommissionAgreementAcceptView,
+    TransactionCommissionAgreementView,
     TransactionDetailView,
     TransactionInvitationCreateView,
     TransactionListCreateView,
@@ -20,6 +22,16 @@ urlpatterns = [
         "api/transactions/<uuid:pk>/participants/",
         TransactionParticipantsView.as_view(),
         name="transaction-participants",
+    ),
+    path(
+        "api/transactions/<uuid:pk>/commission-agreement/",
+        TransactionCommissionAgreementView.as_view(),
+        name="transaction-commission-agreement",
+    ),
+    path(
+        "api/transactions/<uuid:pk>/commission-agreement/accept/",
+        TransactionCommissionAgreementAcceptView.as_view(),
+        name="transaction-commission-agreement-accept",
     ),
     path(
         "api/transactions/<uuid:pk>/invitations/",

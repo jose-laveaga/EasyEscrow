@@ -35,6 +35,16 @@ def _upload_purchase_agreement(client, transaction_id):
         format="multipart",
     )
     assert response.status_code == status.HTTP_201_CREATED
+    confirm_response = client.post(
+        reverse("transaction-purchase-agreement-confirm", args=[transaction_id]),
+        {
+            "purchase_price": "2500000.00",
+            "earnest_money_amount": "100000.00",
+            "currency": "MXN",
+        },
+        format="json",
+    )
+    assert confirm_response.status_code == status.HTTP_200_OK
 
 
 def _create_invitation(client, transaction_id, user, role):

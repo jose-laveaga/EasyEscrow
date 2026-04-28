@@ -15,3 +15,4 @@ PASSWORD_HASHERS = [
 EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
 
 MEDIA_ROOT = BASE_DIR / "test-media"  # noqa: F405
+OPENAI_PURCHASE_AGREEMENT_EXTRACTION_ENABLED = False

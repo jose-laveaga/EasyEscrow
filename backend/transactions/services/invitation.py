@@ -110,12 +110,12 @@ def _ensure_sender_can_invite(*, transaction: Transaction, sent_by_user) -> None
         )
 
 
-def _ensure_purchase_agreement_uploaded(*, transaction: Transaction) -> None:
-    from documents.services.purchase_agreement import transaction_has_purchase_agreement
+def _ensure_purchase_agreement_terms_confirmed(*, transaction: Transaction) -> None:
+    from documents.services.purchase_agreement import transaction_has_confirmed_purchase_agreement_terms
 
-    if not transaction_has_purchase_agreement(transaction=transaction):
+    if not transaction_has_confirmed_purchase_agreement_terms(transaction=transaction):
         raise ValidationError(
-            {"purchase_agreement": "Upload the purchase agreement before sending invitations."}
+            {"purchase_agreement": "Confirm purchase agreement terms before sending invitations."}
         )
 
 
@@ -211,7 +211,7 @@ def invite_participant(
     expire_stale_pending_invitations(transaction_ids=[transaction.pk], sync_transactions=False)
 
     _ensure_sender_can_invite(transaction=transaction, sent_by_user=sent_by_user)
-    _ensure_purchase_agreement_uploaded(transaction=transaction)
+    _ensure_purchase_agreement_terms_confirmed(transaction=transaction)
     _validate_invitation_role(transaction=transaction, intended_role=intended_role)
 
     normalized_email = _normalize_email(target_email)

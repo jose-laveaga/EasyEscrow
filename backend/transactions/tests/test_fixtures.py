@@ -54,7 +54,11 @@ class TransactionFixturesMixin:
         )
         return PurchaseAgreement.objects.create(
             document=document,
-            extraction_status=PurchaseAgreementExtractionStatus.REVIEW_REQUIRED,
+            purchase_price="2500000.00",
+            earnest_money_amount="100000.00",
+            extraction_status=PurchaseAgreementExtractionStatus.CONFIRMED,
+            confirmed_by_user=transaction.created_by,
+            confirmed_at=timezone.now(),
         )
 
     def create_transaction_for_broker(self, broker, *, with_purchase_agreement=True, **overrides):

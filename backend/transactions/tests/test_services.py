@@ -71,7 +71,7 @@ class TransactionServiceTests(TransactionFixturesMixin, TestCase):
         self.assertEqual(invitation.target_email, buyer.email)
         self.assertEqual(invitation.status, InvitationStatus.PENDING)
 
-    def test_invitation_requires_uploaded_purchase_agreement(self):
+    def test_invitation_requires_confirmed_purchase_agreement_terms(self):
         broker = self.create_broker("broker@example.com")
         buyer = self.create_user("buyer@example.com")
         transaction = create_transaction(
@@ -89,6 +89,16 @@ class TransactionServiceTests(TransactionFixturesMixin, TestCase):
             )
 
         self.assertIn("purchase_agreement", context.exception.message_dict)
+
+        self.attach_purchase_agreement(transaction)
+        invite = invite_participant(
+            transaction=transaction,
+            sent_by_user=broker,
+            intended_role=ParticipantRole.BUYER,
+            target_user=buyer,
+        )
+
+        self.assertEqual(invite.status, InvitationStatus.PENDING)
 
     def test_invitation_can_be_sent_by_email_only(self):
         broker = self.create_broker("broker@example.com")
