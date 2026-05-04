@@ -2,6 +2,8 @@ from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import transaction
 from django.utils import timezone
 
+from file_security.policies import IDENTITY_IMAGE_POLICY
+from file_security.services.intake import secure_uploaded_file
 from accounts.models import (
     UserProfile,
     IdentityVerificationStatus,
@@ -51,6 +53,21 @@ def _apply_profile_updates(user_profile: UserProfile, data: dict) -> None:
         if isinstance(value, str):
             value = value.strip()
         setattr(user_profile, field_name, value)
+
+
+def _secure_identity_uploads(data: dict, *, user) -> dict:
+    secured_data = data.copy()
+    if "id_image" not in secured_data or secured_data["id_image"] is None:
+        return secured_data
+
+    secured_upload = secure_uploaded_file(
+        uploaded_file=secured_data["id_image"],
+        policy=IDENTITY_IMAGE_POLICY,
+        uploaded_by=user,
+        error_field="id_image",
+    )
+    secured_data["id_image"] = secured_upload.stored_file_name
+    return secured_data
 
 
 def _apply_identity_updates(user_profile: UserProfile, data: dict) -> None:
@@ -108,8 +125,13 @@ def _validate_identity_submission_requirements(
         raise ValidationError(errors)
 
 
-@transaction.atomic
 def save_identity_verification_draft(*, user, **data) -> UserProfile:
+    data = _secure_identity_uploads(data, user=user)
+    return _save_identity_verification_draft(user=user, **data)
+
+
+@transaction.atomic
+def _save_identity_verification_draft(*, user, **data) -> UserProfile:
     user_profile = _get_locked_user_profile(user)
 
     user_profile.save_draft()
@@ -121,8 +143,13 @@ def save_identity_verification_draft(*, user, **data) -> UserProfile:
     return user_profile
 
 
-@transaction.atomic
 def submit_identity_verification(*, user, **data) -> UserProfile:
+    data = _secure_identity_uploads(data, user=user)
+    return _submit_identity_verification(user=user, **data)
+
+
+@transaction.atomic
+def _submit_identity_verification(*, user, **data) -> UserProfile:
     user_profile = _get_locked_user_profile(user)
 
     _prefill_identity_names(user_profile, user)

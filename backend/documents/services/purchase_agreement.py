@@ -8,6 +8,8 @@ from django.db import transaction as db_transaction
 from django.utils.dateparse import parse_date
 from django.utils import timezone
 
+from file_security.policies import PURCHASE_AGREEMENT_PDF_POLICY
+from file_security.services.intake import secure_uploaded_file
 from documents.models import (
     DocumentType,
     PurchaseAgreement,
@@ -36,13 +38,6 @@ def _ensure_user_can_manage_purchase_agreement(*, transaction: Transaction, user
         raise ValidationError(
             {"uploaded_by_user": "Only active broker participants can manage the purchase agreement."}
         )
-
-
-def _validate_pdf_file(file) -> None:
-    filename = getattr(file, "name", "")
-    content_type = getattr(file, "content_type", "")
-    if not filename.lower().endswith(".pdf") and content_type != "application/pdf":
-        raise ValidationError({"file": "Purchase agreements must be uploaded as PDF files."})
 
 
 def get_latest_purchase_agreement(*, transaction: Transaction) -> PurchaseAgreement | None:
@@ -192,19 +187,18 @@ def _create_purchase_agreement_record(
     *,
     transaction: Transaction,
     uploaded_by_user,
-    file,
+    stored_file_name: str,
     title: str,
 ) -> PurchaseAgreement:
     transaction = Transaction.objects.select_for_update().get(pk=transaction.pk)
     _ensure_user_can_manage_purchase_agreement(transaction=transaction, user=uploaded_by_user)
-    _validate_pdf_file(file)
 
     document = TransactionDocument(
         transaction=transaction,
         uploaded_by_user=uploaded_by_user,
         document_type=DocumentType.PURCHASE_AGREEMENT,
         title=(title or "Purchase agreement").strip(),
-        file=file,
+        file=stored_file_name,
         version=_next_purchase_agreement_version(transaction=transaction),
         is_required=True,
     )
@@ -233,10 +227,17 @@ def upload_purchase_agreement(
     file,
     title: str = "Purchase agreement",
 ) -> PurchaseAgreement:
+    _ensure_user_can_manage_purchase_agreement(transaction=transaction, user=uploaded_by_user)
+    secured_upload = secure_uploaded_file(
+        uploaded_file=file,
+        policy=PURCHASE_AGREEMENT_PDF_POLICY,
+        uploaded_by=uploaded_by_user,
+        error_field="file",
+    )
     agreement = _create_purchase_agreement_record(
         transaction=transaction,
         uploaded_by_user=uploaded_by_user,
-        file=file,
+        stored_file_name=secured_upload.stored_file_name,
         title=title,
     )
     if _extraction_enabled():

@@ -1,10 +1,12 @@
 import shutil
 import tempfile
+from io import BytesIO
 
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from django.test import override_settings
+from PIL import Image
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -41,7 +43,9 @@ class WorkflowFixturesMixin:
         }
 
     def identity_file(self, name="ine-front.png"):
-        return SimpleUploadedFile(name, b"fake-image-data", content_type="image/png")
+        output = BytesIO()
+        Image.new("RGB", (1, 1), color="white").save(output, format="PNG")
+        return SimpleUploadedFile(name, output.getvalue(), content_type="image/png")
 
     def broker_payload(self):
         return {

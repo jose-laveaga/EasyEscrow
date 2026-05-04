@@ -31,6 +31,7 @@ INSTALLED_APPS = [
     'accounts.apps.AccountsConfig',
     'audit',
     'documents',
+    'file_security',
     'kyc',
     'notifications',
     'payments',
@@ -195,5 +196,10 @@ OPENAI_PURCHASE_AGREEMENT_MODEL = os.getenv("OPENAI_PURCHASE_AGREEMENT_MODEL", "
 OPENAI_PURCHASE_AGREEMENT_EXTRACTION_ENABLED = (
     os.getenv("OPENAI_PURCHASE_AGREEMENT_EXTRACTION_ENABLED", "true").lower() == "true"
 )
+
+FILE_SECURITY_MALWARE_SCANNER = os.getenv("FILE_SECURITY_MALWARE_SCANNER", "disabled")
+FILE_SECURITY_CLAMD_HOST = os.getenv("FILE_SECURITY_CLAMD_HOST", "127.0.0.1")
+FILE_SECURITY_CLAMD_PORT = int(os.getenv("FILE_SECURITY_CLAMD_PORT", "3310"))
+FILE_SECURITY_CLAMD_TIMEOUT = float(os.getenv("FILE_SECURITY_CLAMD_TIMEOUT", "10"))
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
